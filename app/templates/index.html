@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Security Monitor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-expand-lg navbar-dark nsm-navbar">
+  <div class="container-fluid px-4">
+    <a class="navbar-brand d-flex align-items-center gap-2" href="#">
+      <i class="fa-solid fa-shield-halved text-primary fs-4"></i>
+      <span class="fw-bold">Network Security Monitor</span>
+    </a>
+    <div class="d-flex align-items-center gap-3 ms-auto">
+      <span id="status-indicator" class="status-badge status-stopped">
+        <span class="status-dot"></span>
+        <span id="status-text">Stopped</span>
+      </span>
+      <span class="text-secondary small" id="uptime-display"></span>
+      <button id="btn-start" class="btn btn-success btn-sm px-3" onclick="startMonitor()">
+        <i class="fa-solid fa-play me-1"></i>Start
+      </button>
+      <button id="btn-stop" class="btn btn-danger btn-sm px-3 d-none" onclick="stopMonitor()">
+        <i class="fa-solid fa-stop me-1"></i>Stop
+      </button>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 py-4">
+
+  <!-- Stat Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card">
+        <div class="stat-icon bg-primary-subtle text-primary">
+          <i class="fa-solid fa-chart-line"></i>
+        </div>
+        <div>
+          <div class="stat-value" id="card-pps">0</div>
+          <div class="stat-label">Packets / sec</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card">
+        <div class="stat-icon bg-warning-subtle text-warning">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <div>
+          <div class="stat-value" id="card-alerts">0</div>
+          <div class="stat-label">Total Alerts</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card">
+        <div class="stat-icon bg-info-subtle text-info">
+          <i class="fa-solid fa-network-wired"></i>
+        </div>
+        <div>
+          <div class="stat-value" id="card-connections">0</div>
+          <div class="stat-label">Active Connections</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="stat-card">
+        <div class="stat-icon bg-danger-subtle text-danger">
+          <i class="fa-solid fa-bug"></i>
+        </div>
+        <div>
+          <div class="stat-value" id="card-threats">0</div>
+          <div class="stat-label">Threats Detected</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-8">
+      <div class="nsm-card h-100">
+        <div class="nsm-card-header">
+          <i class="fa-solid fa-chart-area me-2 text-primary"></i>
+          <span>Traffic Overview</span>
+        </div>
+        <div class="nsm-card-body">
+          <canvas id="trafficChart" height="120"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="nsm-card h-100">
+        <div class="nsm-card-header">
+          <i class="fa-solid fa-chart-pie me-2 text-info"></i>
+          <span>Protocol Distribution</span>
+        </div>
+        <div class="nsm-card-body d-flex align-items-center justify-content-center">
+          <canvas id="protocolChart" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Threat Summary Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="nsm-card">
+        <div class="nsm-card-header d-flex justify-content-between align-items-center">
+          <div>
+            <i class="fa-solid fa-shield-virus me-2 text-danger"></i>
+            <span>Threat Summary</span>
+          </div>
+        </div>
+        <div class="nsm-card-body">
+          <div class="row g-2" id="threat-summary-row">
+            <div class="col text-secondary small fst-italic">No threats detected yet.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alerts Table -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="nsm-card">
+        <div class="nsm-card-header d-flex justify-content-between align-items-center">
+          <div>
+            <i class="fa-solid fa-bell me-2 text-warning"></i>
+            <span>Security Alerts</span>
+            <span class="badge bg-warning text-dark ms-2" id="alerts-badge">0</span>
+          </div>
+          <button class="btn btn-outline-secondary btn-sm" onclick="clearAllAlerts()">
+            <i class="fa-solid fa-trash me-1"></i>Clear All
+          </button>
+        </div>
+        <div class="nsm-card-body p-0">
+          <div class="table-responsive nsm-scroll">
+            <table class="table nsm-table mb-0">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Severity</th>
+                  <th>Source IP</th>
+                  <th>Dest IP</th>
+                  <th>Description</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-tbody">
+                <tr id="no-alerts-row">
+                  <td colspan="7" class="text-center text-secondary fst-italic py-4">No alerts yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connections Table -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="nsm-card">
+        <div class="nsm-card-header d-flex justify-content-between align-items-center">
+          <div>
+            <i class="fa-solid fa-plug me-2 text-info"></i>
+            <span>Active Connections</span>
+            <span class="badge bg-info text-dark ms-2" id="connections-badge">0</span>
+          </div>
+          <button class="btn btn-outline-secondary btn-sm" onclick="loadConnections()">
+            <i class="fa-solid fa-rotate me-1"></i>Refresh
+          </button>
+        </div>
+        <div class="nsm-card-body p-0">
+          <div class="table-responsive nsm-scroll">
+            <table class="table nsm-table mb-0">
+              <thead>
+                <tr>
+                  <th>Source IP</th>
+                  <th>Dest IP</th>
+                  <th>Src Port</th>
+                  <th>Dst Port</th>
+                  <th>Protocol</th>
+                  <th>State</th>
+                </tr>
+              </thead>
+              <tbody id="connections-tbody">
+                <tr>
+                  <td colspan="6" class="text-center text-secondary fst-italic py-4">No connections tracked.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- Toast container -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

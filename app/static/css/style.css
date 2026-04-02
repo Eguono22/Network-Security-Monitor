@@ -1,0 +1,297 @@
+/* ─────────────────────────────────────────────
+   Network Security Monitor – Dark Theme Styles
+   ───────────────────────────────────────────── */
+
+:root {
+  --bg-base:       #0d0d1a;
+  --bg-surface:    #13132b;
+  --bg-card:       #1a1a35;
+  --bg-card-hover: #20204a;
+  --border:        rgba(255,255,255,0.07);
+  --text-primary:  #e8e8f0;
+  --text-secondary:#9090b0;
+  --accent-blue:   #4f8ef7;
+  --accent-cyan:   #22d3ee;
+  --accent-green:  #22c55e;
+  --accent-yellow: #f59e0b;
+  --accent-orange: #f97316;
+  --accent-red:    #ef4444;
+  --severity-critical: #ef4444;
+  --severity-high:     #f97316;
+  --severity-medium:   #f59e0b;
+  --severity-low:      #4f8ef7;
+}
+
+/* ── Reset / Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-surface); }
+::-webkit-scrollbar-thumb { background: #3a3a60; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #5a5a90; }
+
+/* ── Navbar ── */
+.nsm-navbar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0;
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4);
+}
+
+.navbar-brand { font-size: 1.1rem; color: var(--text-primary) !important; }
+
+/* ── Status Badge ── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  transition: all 0.3s ease;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-stopped {
+  background: rgba(239,68,68,0.15);
+  color: var(--accent-red);
+  border: 1px solid rgba(239,68,68,0.3);
+}
+.status-stopped .status-dot {
+  background: var(--accent-red);
+}
+.status-running {
+  background: rgba(34,197,94,0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(34,197,94,0.3);
+}
+.status-running .status-dot {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+  animation: pulse-dot 1.5s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Stat Cards ── */
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.4rem;
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+.stat-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+.stat-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 3px;
+}
+
+/* Bootstrap subtle overrides for dark theme */
+.bg-primary-subtle  { background: rgba(79,142,247,0.15) !important; }
+.bg-warning-subtle  { background: rgba(245,158,11,0.15) !important; }
+.bg-info-subtle     { background: rgba(34,211,238,0.15) !important; }
+.bg-danger-subtle   { background: rgba(239,68,68,0.15)  !important; }
+.text-primary  { color: var(--accent-blue)   !important; }
+.text-warning  { color: var(--accent-yellow) !important; }
+.text-info     { color: var(--accent-cyan)   !important; }
+.text-danger   { color: var(--accent-red)    !important; }
+
+/* ── NSM Card ── */
+.nsm-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.nsm-card-header {
+  display: flex;
+  align-items: center;
+  padding: 0.85rem 1.25rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+.nsm-card-body {
+  padding: 1.25rem;
+}
+
+/* ── Tables ── */
+.nsm-table {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  width: 100%;
+  border-collapse: collapse;
+}
+.nsm-table thead tr {
+  background: var(--bg-surface);
+}
+.nsm-table thead th {
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.nsm-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+.nsm-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+.nsm-table tbody td {
+  padding: 0.65rem 1rem;
+  vertical-align: middle;
+}
+.nsm-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+/* scrollable table wrapper */
+.nsm-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* ── Severity Badges ── */
+.badge-severity {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.badge-critical { background: rgba(239,68,68,0.2);  color: var(--severity-critical); border: 1px solid rgba(239,68,68,0.4); }
+.badge-high     { background: rgba(249,115,22,0.2); color: var(--severity-high);     border: 1px solid rgba(249,115,22,0.4); }
+.badge-medium   { background: rgba(245,158,11,0.2); color: var(--severity-medium);   border: 1px solid rgba(245,158,11,0.4); }
+.badge-low      { background: rgba(79,142,247,0.2); color: var(--severity-low);      border: 1px solid rgba(79,142,247,0.4); }
+
+/* ── Threat Summary Chips ── */
+.threat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.8rem;
+}
+.threat-chip .threat-count {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--accent-red);
+}
+
+/* ── Buttons ── */
+.btn-sm { font-size: 0.8rem; }
+.btn-outline-secondary {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-outline-secondary:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.btn-ack {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--accent-green);
+  color: var(--accent-green);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.btn-ack:hover { background: rgba(34,197,94,0.15); }
+.btn-ack:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+/* acknowledged row */
+.row-ack { opacity: 0.45; }
+
+/* new alert highlight */
+.row-new {
+  animation: flash-row 1.2s ease forwards;
+}
+@keyframes flash-row {
+  0%   { background: rgba(239,68,68,0.25); }
+  100% { background: transparent; }
+}
+
+/* ── Chart canvas ── */
+canvas { display: block; }
+
+/* ── Toast ── */
+.nsm-toast {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  min-width: 260px;
+}
+.nsm-toast .toast-header {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
