@@ -370,7 +370,7 @@ async function loadInitialData() {
     const data = await res.json();
     if (data.success && data.data.length) {
       alertCount = 0;
-      data.data.forEach(a => prependAlertRow(a, /* countSkip */ true));
+      data.data.forEach(a => prependAlertRow(a, /* skipCount */ true));
       alertCount = data.data.length;
       setText('card-alerts', alertCount);
       document.getElementById('alerts-badge').textContent = alertCount;

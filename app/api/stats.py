@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request
 from app.core.monitor import monitor
 from app.core.models import TrafficStat
@@ -15,7 +15,7 @@ def get_stats():
 @stats_bp.route('/stats/history', methods=['GET'])
 def get_stats_history():
     minutes = request.args.get('minutes', 60, type=int)
-    since = datetime.utcnow() - timedelta(minutes=minutes)
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)
     rows = (
         TrafficStat.query
         .filter(TrafficStat.created_at >= since)

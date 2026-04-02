@@ -1,5 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from app.extensions import db, socketio
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from app.core.models import Alert
 
 
@@ -12,8 +16,8 @@ class AlertManager:
             destination_ip=dst_ip,
             description=description,
             acknowledged=False,
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
+            timestamp=_utcnow(),
+            created_at=_utcnow(),
         )
         db.session.add(alert)
         db.session.commit()

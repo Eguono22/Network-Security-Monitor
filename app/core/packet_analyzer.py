@@ -2,7 +2,11 @@ import time
 import random
 import threading
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 SCAPY_AVAILABLE = False
 try:
@@ -94,7 +98,7 @@ class PacketAnalyzer:
                     info['protocol'] = 'ICMP'
                 else:
                     info['protocol'] = 'OTHER'
-                info['timestamp'] = datetime.utcnow().isoformat()
+                info['timestamp'] = _utcnow().isoformat()
                 self._record_packet(info)
         except Exception:
             pass
@@ -125,7 +129,7 @@ class PacketAnalyzer:
             'protocol': protocol,
             'flags': flags,
             'size': size,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': _utcnow().isoformat(),
         }
 
     def _record_packet(self, info):

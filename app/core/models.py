@@ -1,19 +1,23 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from app.extensions import db
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Alert(db.Model):
     __tablename__ = 'alerts'
 
     id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = db.Column(db.DateTime, default=_utcnow, nullable=False)
     alert_type = db.Column(db.String(64), nullable=False)
     severity = db.Column(db.String(16), nullable=False)
     source_ip = db.Column(db.String(45), nullable=True)
     destination_ip = db.Column(db.String(45), nullable=True)
     description = db.Column(db.Text, nullable=True)
     acknowledged = db.Column(db.Boolean, default=False, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow, nullable=False)
 
     def to_dict(self):
         return {
@@ -33,14 +37,14 @@ class TrafficStat(db.Model):
     __tablename__ = 'traffic_stats'
 
     id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = db.Column(db.DateTime, default=_utcnow, nullable=False)
     packets_per_second = db.Column(db.Float, default=0.0)
     bytes_per_second = db.Column(db.Float, default=0.0)
     total_packets = db.Column(db.Integer, default=0)
     total_bytes = db.Column(db.Integer, default=0)
     unique_ips = db.Column(db.Integer, default=0)
     protocol_counts = db.Column(db.JSON, default=dict)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow, nullable=False)
 
     def to_dict(self):
         return {
@@ -68,8 +72,8 @@ class Connection(db.Model):
     state = db.Column(db.String(32), nullable=True)
     bytes_sent = db.Column(db.Integer, default=0)
     bytes_recv = db.Column(db.Integer, default=0)
-    first_seen = db.Column(db.DateTime, default=datetime.utcnow)
-    last_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    first_seen = db.Column(db.DateTime, default=_utcnow)
+    last_seen = db.Column(db.DateTime, default=_utcnow)
 
     def to_dict(self):
         return {

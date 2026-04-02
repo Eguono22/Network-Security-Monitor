@@ -1,6 +1,6 @@
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from app.extensions import socketio, db
 from app.core.packet_analyzer import PacketAnalyzer
 from app.core.threat_detector import ThreatDetector
@@ -37,7 +37,7 @@ class NetworkMonitor:
         if self._running:
             return
         self._running = True
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc).replace(tzinfo=None)
         self._interface = interface
         self._app = app
         self._analyzer.start_capture(interface=interface)
@@ -61,7 +61,7 @@ class NetworkMonitor:
     def get_status(self):
         uptime = None
         if self._start_time:
-            delta = datetime.utcnow() - self._start_time
+            delta = datetime.now(timezone.utc).replace(tzinfo=None) - self._start_time
             uptime = int(delta.total_seconds())
         return {
             'is_running': self._running,
