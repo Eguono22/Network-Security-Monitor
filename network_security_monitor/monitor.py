@@ -95,7 +95,7 @@ class NetworkMonitor:
         self._stats.total_bytes += packet.size
 
         proto = packet.protocol
-        if proto == "TCP":
+        if proto in ("TCP", "HTTP", "HTTPS"):
             self._stats.tcp_packets += 1
         elif proto == "UDP":
             self._stats.udp_packets += 1

@@ -11,6 +11,7 @@ All detectors expose a single public method::
 
 from __future__ import annotations
 
+import re
 import time
 from collections import defaultdict, deque
 from typing import List
@@ -394,6 +395,182 @@ class MaliciousIPDetector:
 
 
 # ---------------------------------------------------------------------------
+# Phishing detector
+# ---------------------------------------------------------------------------
+
+class PhishingDetector:
+    """Detect probable phishing traffic using simple domain/keyword IOC matching."""
+
+    _KEYWORD_PATTERNS = (
+        "verify your account",
+        "password reset",
+        "suspended account",
+        "urgent action required",
+        "confirm your identity",
+    )
+
+    def __init__(self, config: Config):
+        self._cfg = config
+        self._alerted: dict = {}  # src_ip -> last alert ts
+        domains = sorted(d.lower() for d in config.PHISHING_DOMAINS)
+        pattern = "|".join(re.escape(d) for d in domains)
+        self._domain_re = re.compile(pattern) if pattern else None
+
+    def inspect(self, packet: Packet) -> List[Alert]:
+        if packet.protocol not in ("DNS", "HTTP", "HTTPS"):
+            return []
+        if not packet.payload:
+            return []
+
+        try:
+            text = packet.payload.decode("utf-8", errors="ignore").lower()
+        except Exception:
+            return []
+
+        hit = None
+        if self._domain_re:
+            m = self._domain_re.search(text)
+            if m:
+                hit = m.group(0)
+        if hit is None:
+            for keyword in self._KEYWORD_PATTERNS:
+                if keyword in text:
+                    hit = keyword
+                    break
+        if hit is None:
+            return []
+
+        now = packet.timestamp
+        last = self._alerted.get(packet.src_ip, 0)
+        if now - last < 300:
+            return []
+        self._alerted[packet.src_ip] = now
+        return [
+            Alert(
+                threat_type=ThreatType.PHISHING_ATTEMPT,
+                severity=AlertSeverity.HIGH,
+                src_ip=packet.src_ip,
+                dst_ip=packet.dst_ip,
+                dst_port=packet.dst_port,
+                description=f"Phishing indicator detected in traffic payload: '{hit}'",
+                timestamp=now,
+                metadata={"indicator": hit, "protocol": packet.protocol},
+            )
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Data-exfiltration detector
+# ---------------------------------------------------------------------------
+
+class DataExfiltrationDetector:
+    """Detect sustained large outbound transfer volumes from a single source."""
+
+    def __init__(self, config: Config):
+        self._cfg = config
+        self._byte_counters: defaultdict = defaultdict(
+            lambda: _SlidingWindowCounter(config.DATA_EXFIL_TIME_WINDOW)
+        )
+        self._alerted: dict = {}
+
+    def inspect(self, packet: Packet) -> List[Alert]:
+        now = packet.timestamp
+        src = packet.src_ip
+        counter = self._byte_counters[src]
+        counter.add(value=packet.size, ts=now)
+        total_bytes = counter.total(ts=now)
+
+        if total_bytes < self._cfg.DATA_EXFIL_THRESHOLD_BYTES:
+            return []
+
+        last = self._alerted.get(src, 0)
+        if now - last < self._cfg.DATA_EXFIL_TIME_WINDOW:
+            return []
+        self._alerted[src] = now
+        mb = total_bytes / (1024 * 1024)
+        return [
+            Alert(
+                threat_type=ThreatType.DATA_EXFILTRATION,
+                severity=AlertSeverity.CRITICAL,
+                src_ip=src,
+                dst_ip=packet.dst_ip,
+                dst_port=packet.dst_port,
+                description=(
+                    f"Potential data exfiltration: {mb:.2f} MB transmitted within "
+                    f"{self._cfg.DATA_EXFIL_TIME_WINDOW}s"
+                ),
+                timestamp=now,
+                metadata={"bytes_in_window": total_bytes},
+            )
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Unusual-traffic detector
+# ---------------------------------------------------------------------------
+
+class UnusualTrafficDetector:
+    """Detect packet-rate spikes per source IP compared with a rolling baseline."""
+
+    def __init__(self, config: Config):
+        self._cfg = config
+        self._window_counts: defaultdict = defaultdict(
+            lambda: _SlidingWindowCounter(config.TRAFFIC_ANOMALY_TIME_WINDOW)
+        )
+        self._baseline: dict = {}
+        self._total_seen: defaultdict = defaultdict(int)
+        self._alerted: dict = {}
+
+    def inspect(self, packet: Packet) -> List[Alert]:
+        now = packet.timestamp
+        src = packet.src_ip
+
+        self._total_seen[src] += 1
+        counter = self._window_counts[src]
+        counter.add(ts=now)
+        current = counter.total(ts=now)
+
+        prev_baseline = self._baseline.get(src, float(current))
+        # Keep baseline stable during large bursts so anomalies remain visible.
+        if current <= prev_baseline * self._cfg.TRAFFIC_ANOMALY_MULTIPLIER:
+            self._baseline[src] = prev_baseline * 0.95 + float(current) * 0.05
+        else:
+            self._baseline[src] = prev_baseline
+
+        # Warm-up to avoid flagging a source with insufficient baseline history.
+        if self._total_seen[src] < self._cfg.TRAFFIC_ANOMALY_MIN_PACKETS * 2:
+            return []
+        if current < self._cfg.TRAFFIC_ANOMALY_MIN_PACKETS:
+            return []
+        if current < prev_baseline * self._cfg.TRAFFIC_ANOMALY_MULTIPLIER:
+            return []
+
+        last = self._alerted.get(src, 0)
+        if now - last < self._cfg.TRAFFIC_ANOMALY_TIME_WINDOW:
+            return []
+        self._alerted[src] = now
+
+        return [
+            Alert(
+                threat_type=ThreatType.UNUSUAL_TRAFFIC,
+                severity=AlertSeverity.MEDIUM,
+                src_ip=src,
+                dst_ip=packet.dst_ip,
+                description=(
+                    f"Unusual traffic spike: {current} packets/{self._cfg.TRAFFIC_ANOMALY_TIME_WINDOW}s "
+                    f"vs baseline {prev_baseline:.1f}"
+                ),
+                timestamp=now,
+                metadata={
+                    "window_packets": current,
+                    "baseline_packets": round(prev_baseline, 2),
+                    "multiplier": self._cfg.TRAFFIC_ANOMALY_MULTIPLIER,
+                },
+            )
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Composite detector
 # ---------------------------------------------------------------------------
 
@@ -417,6 +594,9 @@ class ThreatDetector:
             DnsTunnelingDetector(cfg),
             SuspiciousPortDetector(cfg),
             MaliciousIPDetector(cfg),
+            PhishingDetector(cfg),
+            DataExfiltrationDetector(cfg),
+            UnusualTrafficDetector(cfg),
         ]
 
     def inspect(self, packet: Packet) -> List[Alert]:

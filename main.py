@@ -58,6 +58,9 @@ def _simulate_traffic(monitor: NetworkMonitor, duration: float = 30.0) -> None:
       * A SYN flood
       * A brute-force SSH attempt
       * DNS tunneling
+      * Phishing indicator in web traffic
+      * Data exfiltration burst
+      * Unusual source traffic spike
       * Traffic to a suspicious port
       * Traffic from a known-malicious IP (if configured)
     """
@@ -135,6 +138,63 @@ def _simulate_traffic(monitor: NetworkMonitor, duration: float = 30.0) -> None:
             protocol="TCP", src_port=55555, dst_port=4444,
             size=100, flags="SYN")
     )
+
+    # ---- phishing indicator -----------------------------------------------
+    monitor.process_packet(
+        pkt(
+            src_ip="10.0.99.6",
+            dst_ip="198.51.100.10",
+            protocol="HTTP",
+            src_port=53111,
+            dst_port=80,
+            size=350,
+            payload=b"GET /login HTTP/1.1\r\nHost: secure-login-verify.com\r\n\r\n",
+        )
+    )
+
+    # ---- data exfiltration ------------------------------------------------
+    exfil_ip = "10.0.99.7"
+    for i in range(200):
+        monitor.process_packet(
+            pkt(
+                src_ip=exfil_ip,
+                dst_ip="203.0.113.50",
+                protocol="HTTPS",
+                src_port=50000 + (i % 1000),
+                dst_port=443,
+                size=64 * 1024,
+            )
+        )
+
+    # ---- unusual traffic anomaly -----------------------------------------
+    anomaly_ip = "10.0.99.8"
+    # Build a low baseline over time
+    for i in range(500):
+        monitor.process_packet(
+            Packet(
+                timestamp=ts + 100 + i * 0.2,
+                src_ip=anomaly_ip,
+                dst_ip=victim_ip,
+                protocol="TCP",
+                src_port=40000 + (i % 500),
+                dst_port=443,
+                size=100,
+            )
+        )
+    # Sudden burst in a short window
+    burst_base = ts + 250
+    for i in range(350):
+        monitor.process_packet(
+            Packet(
+                timestamp=burst_base + i * 0.02,
+                src_ip=anomaly_ip,
+                dst_ip=victim_ip,
+                protocol="TCP",
+                src_port=41000 + (i % 500),
+                dst_port=443,
+                size=120,
+            )
+        )
 
     # ---- DDoS (1 source, many packets in 1 s window) ----------------------
     # Use a fixed base timestamp so all DDoS packets fall within the 1-second

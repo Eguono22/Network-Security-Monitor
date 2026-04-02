@@ -16,14 +16,14 @@ class Config:
     # ---------------------------------------------------------------------------
     # How many distinct destination ports a single source IP must touch within
     # PORT_SCAN_TIME_WINDOW seconds before it is flagged as a port scan.
-    PORT_SCAN_THRESHOLD: int = 20
-    PORT_SCAN_TIME_WINDOW: int = 10  # seconds
+    PORT_SCAN_THRESHOLD: int = 25
+    PORT_SCAN_TIME_WINDOW: int = 15  # seconds
 
     # ---------------------------------------------------------------------------
     # SYN-flood detection
     # ---------------------------------------------------------------------------
     # SYN packets per second from a single source IP before raising an alert.
-    SYN_FLOOD_THRESHOLD: int = 100
+    SYN_FLOOD_THRESHOLD: int = 200
     SYN_FLOOD_TIME_WINDOW: float = 1.0  # seconds
 
     # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ class Config:
     # ---------------------------------------------------------------------------
     # Number of connection attempts to authentication services within
     # BRUTE_FORCE_TIME_WINDOW seconds before an alert is raised.
-    BRUTE_FORCE_THRESHOLD: int = 10
+    BRUTE_FORCE_THRESHOLD: int = 12
     BRUTE_FORCE_TIME_WINDOW: int = 60  # seconds
     # Well-known authentication service ports
     BRUTE_FORCE_PORTS: Set[int] = {22, 21, 23, 25, 110, 143, 3389, 5900}
@@ -40,17 +40,17 @@ class Config:
     # DDoS detection
     # ---------------------------------------------------------------------------
     # Total packets per second originating from a single IP.
-    DDOS_THRESHOLD: int = 1000
+    DDOS_THRESHOLD: int = 1500
     DDOS_TIME_WINDOW: float = 1.0  # seconds
 
     # ---------------------------------------------------------------------------
     # DNS-tunneling detection
     # ---------------------------------------------------------------------------
     # DNS query payload size (bytes) above which traffic is treated as suspicious.
-    DNS_QUERY_SIZE_THRESHOLD: int = 512
+    DNS_QUERY_SIZE_THRESHOLD: int = 700
     # Number of large DNS queries within DNS_TIME_WINDOW seconds.
-    DNS_LARGE_QUERY_THRESHOLD: int = 10
-    DNS_TIME_WINDOW: int = 60  # seconds
+    DNS_LARGE_QUERY_THRESHOLD: int = 12
+    DNS_TIME_WINDOW: int = 90  # seconds
 
     # ---------------------------------------------------------------------------
     # Suspicious ports
@@ -75,6 +75,32 @@ class Config:
     # (In production these would be loaded from threat-intelligence feeds.)
     # ---------------------------------------------------------------------------
     KNOWN_MALICIOUS_IPS: Set[str] = set()
+
+    # ---------------------------------------------------------------------------
+    # Phishing detection
+    # ---------------------------------------------------------------------------
+    # Domains / indicators often seen in phishing campaigns.
+    PHISHING_DOMAINS: Set[str] = {
+        "secure-login-verify.com",
+        "update-your-account.net",
+        "microsoft-security-check.com",
+        "paypal-verification-alert.com",
+    }
+
+    # ---------------------------------------------------------------------------
+    # Data-exfiltration detection
+    # ---------------------------------------------------------------------------
+    # Detect unusually large upload volume per source within the window.
+    DATA_EXFIL_TIME_WINDOW: int = 300  # seconds
+    DATA_EXFIL_THRESHOLD_BYTES: int = 50 * 1024 * 1024  # 50 MB / 5 minutes
+
+    # ---------------------------------------------------------------------------
+    # Unusual-traffic (anomaly) detection
+    # ---------------------------------------------------------------------------
+    # Compares short-term packet count to a rolling baseline per source IP.
+    TRAFFIC_ANOMALY_TIME_WINDOW: int = 30  # seconds
+    TRAFFIC_ANOMALY_MIN_PACKETS: int = 300
+    TRAFFIC_ANOMALY_MULTIPLIER: float = 3.5
 
     # ---------------------------------------------------------------------------
     # Alert / logging

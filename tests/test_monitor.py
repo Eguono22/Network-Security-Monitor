@@ -53,6 +53,11 @@ class TestNetworkMonitorStats:
         monitor.process_packet(_pkt(protocol="UDP", size=100))
         assert monitor.get_stats().udp_packets == 1
 
+    def test_http_counted_as_tcp(self):
+        monitor = NetworkMonitor(_cfg())
+        monitor.process_packet(_pkt(protocol="HTTP", dst_port=80, size=128))
+        assert monitor.get_stats().tcp_packets == 1
+
     def test_icmp_packet_counted(self):
         monitor = NetworkMonitor(_cfg())
         monitor.process_packet(_pkt(protocol="ICMP", size=84))

@@ -8,13 +8,16 @@ from network_security_monitor.config import Config
 from network_security_monitor.models import AlertSeverity, Packet, ThreatType
 from network_security_monitor.threat_detector import (
     BruteForceDetector,
+    DataExfiltrationDetector,
     DDoSDetector,
     DnsTunnelingDetector,
     MaliciousIPDetector,
+    PhishingDetector,
     PortScanDetector,
     SuspiciousPortDetector,
     SynFloodDetector,
     ThreatDetector,
+    UnusualTrafficDetector,
 )
 
 
@@ -342,3 +345,56 @@ class TestThreatDetector:
         types = {a.threat_type for a in alerts}
         assert ThreatType.SUSPICIOUS_PORT in types
         assert ThreatType.MALICIOUS_IP in types
+
+
+class TestPhishingDetector:
+    def test_alert_for_suspicious_domain_in_payload(self):
+        cfg = _make_config(PHISHING_DOMAINS={"evil-login.example"})
+        det = PhishingDetector(cfg)
+        pkt = _pkt(
+            protocol="HTTP",
+            dst_port=80,
+            payload=b"GET / HTTP/1.1\r\nHost: evil-login.example\r\n\r\n",
+        )
+        alerts = det.inspect(pkt)
+        assert len(alerts) == 1
+        assert alerts[0].threat_type == ThreatType.PHISHING_ATTEMPT
+
+    def test_ignores_non_web_non_dns_traffic(self):
+        cfg = _make_config(PHISHING_DOMAINS={"evil-login.example"})
+        det = PhishingDetector(cfg)
+        pkt = _pkt(protocol="TCP", dst_port=22, payload=b"evil-login.example")
+        assert det.inspect(pkt) == []
+
+
+class TestDataExfiltrationDetector:
+    def test_alert_when_threshold_crossed(self):
+        cfg = _make_config(DATA_EXFIL_TIME_WINDOW=60, DATA_EXFIL_THRESHOLD_BYTES=1000)
+        det = DataExfiltrationDetector(cfg)
+        ts = time.time()
+        alerts = []
+        for i in range(5):
+            alerts.extend(det.inspect(_pkt(size=300, ts=ts + i * 0.5)))
+        assert any(a.threat_type == ThreatType.DATA_EXFILTRATION for a in alerts)
+
+
+class TestUnusualTrafficDetector:
+    def test_alert_on_packet_rate_spike(self):
+        cfg = _make_config(
+            TRAFFIC_ANOMALY_TIME_WINDOW=10,
+            TRAFFIC_ANOMALY_MIN_PACKETS=20,
+            TRAFFIC_ANOMALY_MULTIPLIER=2.0,
+        )
+        det = UnusualTrafficDetector(cfg)
+        ts = time.time()
+
+        # Warm baseline: sparse traffic
+        for i in range(60):
+            det.inspect(_pkt(src_ip="9.9.9.9", ts=ts + i * 0.5))
+
+        alerts = []
+        # Spike burst within the detection window
+        for i in range(80):
+            alerts.extend(det.inspect(_pkt(src_ip="9.9.9.9", ts=ts + 40 + i * 0.05)))
+
+        assert any(a.threat_type == ThreatType.UNUSUAL_TRAFFIC for a in alerts)

@@ -3,7 +3,8 @@ Network Security Monitor (NSM)
 
 A system for continuously monitoring, analyzing, and detecting suspicious activity
 across a network. Identifies threats such as port scans, SYN floods, brute-force
-attempts, DDoS attacks, DNS tunneling, and connections to suspicious hosts.
+attempts, DDoS attacks, DNS tunneling, phishing indicators, data exfiltration,
+and unusual traffic spikes.
 """
 
 from .config import Config

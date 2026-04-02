@@ -1,6 +1,6 @@
 # Network Security Monitor
 
-A Network Security Monitor (NSM) that continuously observes, analyzes, and detects suspicious activity across a network. It identifies cyber threats such as port scans, SYN floods, brute-force login attempts, DDoS attacks, DNS tunneling, connections to back-door ports, and traffic to/from known-malicious IP addresses.
+A Network Security Monitor (NSM) that continuously observes, analyzes, and detects suspicious activity across a network. It identifies cyber threats such as unauthorized access attempts, malware/C2 behavior, phishing indicators, potential data leaks, and unusual traffic patterns.
 
 ---
 
@@ -15,6 +15,9 @@ A Network Security Monitor (NSM) that continuously observes, analyzes, and detec
 | **DNS Tunneling** | Oversized DNS query payloads (data exfiltration) |
 | **Suspicious Port** | Connections to known back-door / C2 ports (4444, 1337, 31337, …) |
 | **Malicious IP** | Traffic to/from threat-intelligence-listed IPs |
+| **Phishing Attempt** | IOC/keyword match in DNS/HTTP/HTTPS payload content |
+| **Data Exfiltration** | High outbound byte volume from one source in a short window |
+| **Unusual Traffic** | Source packet-rate spike versus rolling baseline |
 
 ---
 
@@ -96,6 +99,9 @@ Config.DDOS_THRESHOLD           = 1000 # packets per second
 Config.DNS_QUERY_SIZE_THRESHOLD = 512  # bytes; larger queries are suspicious
 Config.SUSPICIOUS_PORTS         = {4444, 1337, 31337, ...}
 Config.KNOWN_MALICIOUS_IPS      = {"x.x.x.x", ...}  # load from threat intel feeds
+Config.PHISHING_DOMAINS         = {"example-phish-domain.com", ...}
+Config.DATA_EXFIL_THRESHOLD_BYTES = 10485760  # bytes per DATA_EXFIL_TIME_WINDOW
+Config.TRAFFIC_ANOMALY_MULTIPLIER = 3.0       # spike factor over baseline
 ```
 
 ---
