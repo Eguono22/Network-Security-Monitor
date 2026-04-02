@@ -22,8 +22,7 @@ def get_alerts():
     offset = request.args.get('offset', 0, type=int)
     if acknowledged is not None:
         acknowledged = acknowledged.lower() == 'true'
-    alerts = _manager.get_alerts(limit=limit + offset, severity=severity, acknowledged=acknowledged)
-    alerts = alerts[offset:offset + limit]
+    alerts = _manager.get_alerts(limit=limit, offset=offset, severity=severity, acknowledged=acknowledged)
     return jsonify({'success': True, 'data': [a.to_dict() for a in alerts]})
 
 

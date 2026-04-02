@@ -23,13 +23,15 @@ class AlertManager:
             pass
         return alert
 
-    def get_alerts(self, limit=100, severity=None, acknowledged=None):
+    def get_alerts(self, limit=100, offset=0, severity=None, acknowledged=None):
         query = Alert.query
         if severity:
             query = query.filter(Alert.severity == severity.upper())
         if acknowledged is not None:
             query = query.filter(Alert.acknowledged == acknowledged)
         query = query.order_by(Alert.created_at.desc())
+        if offset:
+            query = query.offset(offset)
         query = query.limit(limit)
         return query.all()
 

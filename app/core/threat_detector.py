@@ -53,6 +53,10 @@ class ThreatDetector:
         if threat:
             threats.append(threat)
 
+        threat = self.detect_dns_tunneling(packet_info)
+        if threat:
+            threats.append(threat)
+
         return threats
 
     def detect_port_scan(self, src_ip, dst_port):

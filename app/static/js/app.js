@@ -152,7 +152,7 @@ function updateProtocolChart(counts) {
 // ── Alert table helpers ────────────────────────
 let alertCount = 0;
 
-function prependAlertRow(alert) {
+function prependAlertRow(alert, skipCount = false) {
   const tbody = document.getElementById('alerts-tbody');
   const noRow = document.getElementById('no-alerts-row');
   if (noRow) noRow.remove();
@@ -177,8 +177,10 @@ function prependAlertRow(alert) {
       </button>
     </td>`;
   tbody.insertBefore(tr, tbody.firstChild);
-  alertCount++;
-  setText('card-alerts', alertCount);
+  if (!skipCount) {
+    alertCount++;
+    setText('card-alerts', alertCount);
+  }
 }
 
 function incrementAlertBadge() {
@@ -251,6 +253,7 @@ function setMonitorRunning(running) {
     statusText.textContent = 'Stopped';
     btnStart.classList.remove('d-none');
     btnStop.classList.add('d-none');
+    uptimeSeconds = 0;
     document.getElementById('uptime-display').textContent = '';
   }
 }
@@ -366,8 +369,8 @@ async function loadInitialData() {
     const res = await fetch('/api/v1/alerts?limit=50');
     const data = await res.json();
     if (data.success && data.data.length) {
-      data.data.forEach(a => prependAlertRow(a));
-      // Fix count after bulk load
+      alertCount = 0;
+      data.data.forEach(a => prependAlertRow(a, /* countSkip */ true));
       alertCount = data.data.length;
       setText('card-alerts', alertCount);
       document.getElementById('alerts-badge').textContent = alertCount;
