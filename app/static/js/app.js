@@ -425,8 +425,8 @@ setInterval(() => {
 }, 1000);
 
 // ── Auto-refresh connections every 5 s ─────────
-setInterval(loadConnections, 5000);
-setInterval(loadThreatSummary, 10000);
+const connectionInterval = setInterval(loadConnections, 5000);
+const threatInterval = setInterval(loadThreatSummary, 10000);
 
 // ── Boot ───────────────────────────────────────
 document.addEventListener('DOMContentLoaded', loadInitialData);

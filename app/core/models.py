@@ -1,9 +1,5 @@
-from datetime import datetime, timezone
 from app.extensions import db
-
-
-def _utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from app.core.utils import utcnow as _utcnow
 
 
 class Alert(db.Model):
