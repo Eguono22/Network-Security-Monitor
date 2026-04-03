@@ -12,5 +12,6 @@ build/
 .uv-cache/
 pytest-cache-files-*/
 .test_tmp/
+.env
 alerts.log
 *.log
