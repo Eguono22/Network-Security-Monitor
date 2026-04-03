@@ -9,6 +9,7 @@ import smtplib
 from collections import deque
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from logging.handlers import RotatingFileHandler
 from typing import Callable, Deque, List
 from urllib import request
 
@@ -128,7 +129,12 @@ class AlertManager:
         # File handler
         log_path = self._cfg.ALERT_LOG_FILE
         try:
-            file_handler = logging.FileHandler(log_path, encoding="utf-8")
+            file_handler = RotatingFileHandler(
+                log_path,
+                maxBytes=self._cfg.ALERT_LOG_MAX_BYTES,
+                backupCount=self._cfg.ALERT_LOG_BACKUP_COUNT,
+                encoding="utf-8",
+            )
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(
                 logging.Formatter("%(asctime)s %(levelname)s %(message)s")

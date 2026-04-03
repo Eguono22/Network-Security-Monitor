@@ -1,0 +1,17 @@
+[Unit]
+Description=Network Security Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/network-security-monitor
+EnvironmentFile=/etc/nsm/nsm.env
+ExecStart=/usr/bin/python3 /opt/network-security-monitor/main.py --live --interface eth0 --profile office
+Restart=always
+RestartSec=5
+User=nsm
+Group=nsm
+
+[Install]
+WantedBy=multi-user.target

@@ -109,6 +109,8 @@ class Config:
     # Alert / logging
     # ---------------------------------------------------------------------------
     ALERT_LOG_FILE: str = "alerts.log"
+    ALERT_LOG_MAX_BYTES: int = 5 * 1024 * 1024
+    ALERT_LOG_BACKUP_COUNT: int = 5
     # Maximum number of alerts kept in memory before the oldest are discarded.
     MAX_ALERT_HISTORY: int = 10_000
     # Minimum severity level to write to the log file (DEBUG < INFO < WARNING …)
@@ -151,6 +153,12 @@ class Config:
         self.ALERT_EMAIL_FROM = os.getenv("NSM_ALERT_EMAIL_FROM", self.ALERT_EMAIL_FROM)
         self.ALERT_EMAIL_TO = os.getenv("NSM_ALERT_EMAIL_TO", self.ALERT_EMAIL_TO)
         self.SIEM_OUTPUT_FILE = os.getenv("NSM_SIEM_OUTPUT_FILE", self.SIEM_OUTPUT_FILE)
+        self.ALERT_LOG_MAX_BYTES = int(
+            os.getenv("NSM_ALERT_LOG_MAX_BYTES", str(self.ALERT_LOG_MAX_BYTES))
+        )
+        self.ALERT_LOG_BACKUP_COUNT = int(
+            os.getenv("NSM_ALERT_LOG_BACKUP_COUNT", str(self.ALERT_LOG_BACKUP_COUNT))
+        )
 
     def apply_profile(self, profile_name: str, profile_file: str | None = None) -> bool:
         """Apply threshold overrides from a named profile file.

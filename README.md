@@ -81,6 +81,10 @@ python main.py --live --interface eth0 --live-duration 1800
 python main.py --live --profile office
 ```
 
+After simulation/live runs, NSM now prints:
+- integration readiness (`Slack/webhook/email/SIEM` configured or not)
+- tuning guidance based on observed alert volume
+
 ### View Past Alerts
 
 ```bash
@@ -120,6 +124,9 @@ Baseline profiles:
 - `dev`
 - `office`
 - `datacenter`
+- `home_lab`
+- `corp_wifi`
+- `server_vlan`
 
 You can load a profile at runtime:
 
@@ -134,6 +141,12 @@ Slack validation:
 set NSM_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ
 python main.py --simulate --no-dashboard
 ```
+
+Deployment hardening assets:
+- `deploy/systemd/nsm.service`
+- `deploy/windows/install_task.ps1`
+- `deploy/windows/run_nsm.ps1`
+- `.env.example` for secret/env setup
 
 ---
 

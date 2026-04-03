@@ -28,6 +28,7 @@ import logging
 import signal
 import sys
 import time
+from collections import Counter
 
 from network_security_monitor.config import Config
 from network_security_monitor.dashboard import Dashboard
@@ -301,6 +302,70 @@ def _print_alerts_from_file(path: str) -> int:
     return 0
 
 
+def _print_integration_status(config: Config) -> None:
+    configured = []
+    if config.SLACK_WEBHOOK_URL:
+        configured.append("Slack webhook")
+    if config.ALERT_WEBHOOK_URL:
+        configured.append("Generic webhook")
+    if config.SMTP_HOST and config.ALERT_EMAIL_TO:
+        configured.append("SMTP email")
+    if config.SIEM_OUTPUT_FILE:
+        configured.append(f"SIEM file ({config.SIEM_OUTPUT_FILE})")
+
+    print("\nIntegration status:")
+    if configured:
+        print(f"  Configured: {', '.join(configured)}")
+    else:
+        print("  Configured: none")
+        print("  Tip: set NSM_SLACK_WEBHOOK_URL to forward alerts immediately.")
+
+
+def _print_tuning_suggestions(monitor: NetworkMonitor, config: Config) -> None:
+    am = monitor.get_alert_manager()
+    stats = monitor.get_stats()
+    alert_stats = am.get_stats()
+    total = alert_stats["total"]
+    runtime_minutes = max((time.time() - stats.start_time) / 60.0, 1 / 60.0)
+    alerts_per_minute = total / runtime_minutes
+    alerts = am.get_recent(max(total, 1))
+
+    recent_5m = [a for a in alerts if a.timestamp >= (time.time() - 300)]
+    top_offender = "none"
+    if recent_5m:
+        src, count = Counter(a.src_ip for a in recent_5m).most_common(1)[0]
+        top_offender = f"{src} ({count})"
+
+    print("\nTuning guidance:")
+    print(f"  Alerts/min observed : {alerts_per_minute:.2f}")
+    print(f"  Top offender (5m)   : {top_offender}")
+
+    suggestions = []
+    by_type = alert_stats["by_threat_type"]
+    if alerts_per_minute > 20:
+        suggestions.append(
+            f"High alert volume: raise TRAFFIC_ANOMALY_MIN_PACKETS (current {config.TRAFFIC_ANOMALY_MIN_PACKETS}) "
+            f"or TRAFFIC_ANOMALY_MULTIPLIER (current {config.TRAFFIC_ANOMALY_MULTIPLIER})."
+        )
+    if by_type.get("DDOS", 0) >= 3:
+        suggestions.append(
+            f"Frequent DDoS alerts: consider increasing DDOS_THRESHOLD (current {config.DDOS_THRESHOLD})."
+        )
+    if by_type.get("BRUTE_FORCE", 0) >= 3:
+        suggestions.append(
+            f"Frequent brute-force alerts: consider increasing BRUTE_FORCE_THRESHOLD (current {config.BRUTE_FORCE_THRESHOLD})."
+        )
+    if total == 0:
+        suggestions.append(
+            "No alerts detected: lower PORT_SCAN_THRESHOLD / BRUTE_FORCE_THRESHOLD slightly to increase sensitivity."
+        )
+    if not suggestions:
+        suggestions.append("Current thresholds look stable for this traffic sample.")
+
+    for item in suggestions:
+        print(f"  - {item}")
+
+
 def _list_interfaces() -> int:
     try:
         from scapy.interfaces import get_if_list
@@ -363,6 +428,8 @@ def main(argv: list | None = None) -> int:
             if count:
                 print(f"              {sev}: {count}")
         print(f"{'-' * 60}")
+        _print_integration_status(config)
+        _print_tuning_suggestions(monitor, config)
 
         if not args.no_dashboard:
             dashboard = Dashboard(monitor, config)
@@ -391,11 +458,15 @@ def main(argv: list | None = None) -> int:
         except KeyboardInterrupt:
             pass
         monitor.stop()
+        _print_integration_status(config)
+        _print_tuning_suggestions(monitor, config)
     else:
         dashboard = Dashboard(monitor, config)
         run_duration = args.live_duration if args.live_duration > 0 else None
         dashboard.run(duration_seconds=run_duration)
         monitor.stop()
+        _print_integration_status(config)
+        _print_tuning_suggestions(monitor, config)
 
     return 0
 
