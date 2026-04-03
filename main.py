@@ -305,13 +305,13 @@ def main(argv: list | None = None) -> int:
         # Print summary.
         stats = monitor.get_stats()
         am = monitor.get_alert_manager()
-        print(f"\n{'─'*60}")
+        print(f"\n{'-' * 60}")
         print(f"  Processed : {stats.total_packets:,} packets")
         print(f"  Alerts    : {am.get_stats()['total']:,} total")
         for sev, count in am.get_stats()["by_severity"].items():
             if count:
                 print(f"              {sev}: {count}")
-        print(f"{'─'*60}")
+        print(f"{'-' * 60}")
 
         if not args.no_dashboard:
             dashboard = Dashboard(monitor, config)

@@ -1,6 +1,10 @@
 """Unit tests for AlertManager."""
 
+import json
+import shutil
 import time
+import uuid
+from pathlib import Path
 
 import pytest
 
@@ -112,3 +116,35 @@ class TestAlertManager:
         # Should not raise
         am.add(_make_alert())
         assert am.get_stats()["total"] == 1
+
+    def test_siem_output_file_callback_writes_jsonl(self):
+        tmp_root = Path(".test_tmp") / f"siem-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        cfg = Config()
+        cfg.SIEM_OUTPUT_FILE = str(tmp_root / "siem" / "alerts.jsonl")
+        cfg.ALERT_NOTIFY_MIN_SEVERITY = "MEDIUM"
+        am = AlertManager(cfg)
+        am.add(_make_alert(severity=AlertSeverity.HIGH, threat_type=ThreatType.DDOS))
+
+        try:
+            lines = (tmp_root / "siem" / "alerts.jsonl").read_text(encoding="utf-8").splitlines()
+            assert len(lines) == 1
+            payload = json.loads(lines[0])
+            assert payload["severity"] == "HIGH"
+            assert payload["threat_type"] == "DDOS"
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_siem_output_respects_min_notify_severity(self):
+        tmp_root = Path(".test_tmp") / f"siem-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        cfg = Config()
+        cfg.SIEM_OUTPUT_FILE = str(tmp_root / "siem" / "alerts.jsonl")
+        cfg.ALERT_NOTIFY_MIN_SEVERITY = "CRITICAL"
+        am = AlertManager(cfg)
+        am.add(_make_alert(severity=AlertSeverity.HIGH))
+        try:
+            path = tmp_root / "siem" / "alerts.jsonl"
+            assert not path.exists()
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import smtplib
 from collections import deque
-from typing import Callable, Deque, List, Optional
+from datetime import datetime, timezone
+from email.message import EmailMessage
+from typing import Callable, Deque, List
+from urllib import request
 
 from .config import Config
 from .models import Alert, AlertSeverity, ThreatType
@@ -17,6 +22,13 @@ _SEVERITY_TO_LOG_LEVEL = {
     AlertSeverity.MEDIUM: logging.WARNING,
     AlertSeverity.HIGH: logging.ERROR,
     AlertSeverity.CRITICAL: logging.CRITICAL,
+}
+
+_SEVERITY_RANK = {
+    AlertSeverity.LOW: 0,
+    AlertSeverity.MEDIUM: 1,
+    AlertSeverity.HIGH: 2,
+    AlertSeverity.CRITICAL: 3,
 }
 
 
@@ -42,6 +54,7 @@ class AlertManager:
         self._history: Deque[Alert] = deque(maxlen=self._cfg.MAX_ALERT_HISTORY)
         self._callbacks: List[Callable[[Alert], None]] = []
         self._logger = self._build_logger()
+        self._register_builtin_integrations()
 
     # ------------------------------------------------------------------
     # Public API
@@ -127,3 +140,109 @@ class AlertManager:
             pass
 
         return logger
+
+    def _register_builtin_integrations(self) -> None:
+        if self._cfg.ALERT_WEBHOOK_URL:
+            self.register_callback(self._webhook_callback(self._cfg.ALERT_WEBHOOK_URL))
+        if self._cfg.SLACK_WEBHOOK_URL:
+            self.register_callback(self._slack_callback(self._cfg.SLACK_WEBHOOK_URL))
+        if self._cfg.SMTP_HOST and self._cfg.ALERT_EMAIL_TO:
+            self.register_callback(self._email_callback())
+        if self._cfg.SIEM_OUTPUT_FILE:
+            self.register_callback(self._siem_file_callback(self._cfg.SIEM_OUTPUT_FILE))
+
+    def _should_notify(self, alert: Alert) -> bool:
+        min_sev = self._cfg.ALERT_NOTIFY_MIN_SEVERITY.upper()
+        try:
+            threshold = AlertSeverity[min_sev]
+        except KeyError:
+            threshold = AlertSeverity.HIGH
+        return _SEVERITY_RANK[alert.severity] >= _SEVERITY_RANK[threshold]
+
+    def _alert_payload(self, alert: Alert) -> dict:
+        return {
+            "timestamp": alert.timestamp,
+            "threat_type": alert.threat_type.value,
+            "severity": alert.severity.value,
+            "src_ip": alert.src_ip,
+            "dst_ip": alert.dst_ip,
+            "dst_port": alert.dst_port,
+            "description": alert.description,
+            "metadata": alert.metadata,
+        }
+
+    def _webhook_callback(self, url: str) -> Callable[[Alert], None]:
+        def _send(alert: Alert) -> None:
+            if not self._should_notify(alert):
+                return
+            payload = json.dumps(self._alert_payload(alert)).encode("utf-8")
+            req = request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            request.urlopen(req, timeout=3).read()
+
+        return _send
+
+    def _slack_callback(self, url: str) -> Callable[[Alert], None]:
+        def _send(alert: Alert) -> None:
+            if not self._should_notify(alert):
+                return
+            message = {
+                "text": (
+                    f"[{alert.severity.value}] {alert.threat_type.value} "
+                    f"src={alert.src_ip} {alert.description}"
+                )
+            }
+            payload = json.dumps(message).encode("utf-8")
+            req = request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            request.urlopen(req, timeout=3).read()
+
+        return _send
+
+    def _email_callback(self) -> Callable[[Alert], None]:
+        recipients = [r.strip() for r in self._cfg.ALERT_EMAIL_TO.split(",") if r.strip()]
+
+        def _send(alert: Alert) -> None:
+            if not recipients or not self._should_notify(alert):
+                return
+            msg = EmailMessage()
+            msg["From"] = self._cfg.ALERT_EMAIL_FROM
+            msg["To"] = ", ".join(recipients)
+            msg["Subject"] = (
+                f"NSM Alert: {alert.severity.value} {alert.threat_type.value} "
+                f"from {alert.src_ip}"
+            )
+            msg.set_content(str(alert))
+
+            with smtplib.SMTP(self._cfg.SMTP_HOST, self._cfg.SMTP_PORT, timeout=5) as smtp:
+                smtp.starttls()
+                if self._cfg.SMTP_USERNAME:
+                    smtp.login(self._cfg.SMTP_USERNAME, self._cfg.SMTP_PASSWORD)
+                smtp.send_message(msg)
+
+        return _send
+
+    def _siem_file_callback(self, path: str) -> Callable[[Alert], None]:
+        def _send(alert: Alert) -> None:
+            if not self._should_notify(alert):
+                return
+            payload = self._alert_payload(alert)
+            payload["iso_time"] = datetime.fromtimestamp(
+                alert.timestamp, tz=timezone.utc
+            ).isoformat()
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload))
+                fh.write("\n")
+
+        return _send

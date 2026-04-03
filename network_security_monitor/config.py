@@ -1,5 +1,6 @@
 """Configuration for the Network Security Monitor."""
 
+import os
 from typing import Set
 
 
@@ -110,9 +111,39 @@ class Config:
     MAX_ALERT_HISTORY: int = 10_000
     # Minimum severity level to write to the log file (DEBUG < INFO < WARNING …)
     MIN_LOG_SEVERITY: str = "INFO"
+    # Minimum severity level for outbound notifications/integrations.
+    ALERT_NOTIFY_MIN_SEVERITY: str = "HIGH"
+    # Optional generic webhook integration (POSTs JSON payload per alert).
+    ALERT_WEBHOOK_URL: str = ""
+    # Optional Slack incoming webhook URL.
+    SLACK_WEBHOOK_URL: str = ""
+    # Optional email integration.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    ALERT_EMAIL_FROM: str = "nsm@localhost"
+    ALERT_EMAIL_TO: str = ""
+    # Optional SIEM-style JSONL file output for alert forwarding.
+    SIEM_OUTPUT_FILE: str = ""
 
     # ---------------------------------------------------------------------------
     # Dashboard
     # ---------------------------------------------------------------------------
     DASHBOARD_REFRESH_INTERVAL: float = 1.0  # seconds
     DASHBOARD_TOP_TALKERS_COUNT: int = 10
+
+    def __init__(self):
+        # Lightweight env-based overrides for deployment flexibility.
+        self.ALERT_NOTIFY_MIN_SEVERITY = os.getenv(
+            "NSM_ALERT_NOTIFY_MIN_SEVERITY", self.ALERT_NOTIFY_MIN_SEVERITY
+        ).upper()
+        self.ALERT_WEBHOOK_URL = os.getenv("NSM_ALERT_WEBHOOK_URL", self.ALERT_WEBHOOK_URL)
+        self.SLACK_WEBHOOK_URL = os.getenv("NSM_SLACK_WEBHOOK_URL", self.SLACK_WEBHOOK_URL)
+        self.SMTP_HOST = os.getenv("NSM_SMTP_HOST", self.SMTP_HOST)
+        self.SMTP_PORT = int(os.getenv("NSM_SMTP_PORT", str(self.SMTP_PORT)))
+        self.SMTP_USERNAME = os.getenv("NSM_SMTP_USERNAME", self.SMTP_USERNAME)
+        self.SMTP_PASSWORD = os.getenv("NSM_SMTP_PASSWORD", self.SMTP_PASSWORD)
+        self.ALERT_EMAIL_FROM = os.getenv("NSM_ALERT_EMAIL_FROM", self.ALERT_EMAIL_FROM)
+        self.ALERT_EMAIL_TO = os.getenv("NSM_ALERT_EMAIL_TO", self.ALERT_EMAIL_TO)
+        self.SIEM_OUTPUT_FILE = os.getenv("NSM_SIEM_OUTPUT_FILE", self.SIEM_OUTPUT_FILE)

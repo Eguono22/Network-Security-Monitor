@@ -29,8 +29,8 @@ network_security_monitor/
 ├── config.py            – Configurable thresholds and settings
 ├── models.py            – Data classes: Packet, Alert, TrafficStats
 ├── packet_analyzer.py   – Scapy → Packet conversion
-├── threat_detector.py   – All detection logic (7 detectors)
-├── alert_manager.py     – Alert storage, logging, and callbacks
+├── threat_detector.py   – All detection logic (10 detectors)
+├── alert_manager.py     – Alert storage, logging, and callback integrations
 ├── monitor.py           – Main coordinator; live capture or replay mode
 └── dashboard.py         – Real-time CLI dashboard
 
@@ -92,17 +92,26 @@ Edit `network_security_monitor/config.py` to adjust detection thresholds.
 Key settings:
 
 ```python
-Config.PORT_SCAN_THRESHOLD      = 20   # distinct ports in PORT_SCAN_TIME_WINDOW seconds
-Config.SYN_FLOOD_THRESHOLD      = 100  # SYN packets per second
-Config.BRUTE_FORCE_THRESHOLD    = 10   # attempts per BRUTE_FORCE_TIME_WINDOW seconds
-Config.DDOS_THRESHOLD           = 1000 # packets per second
-Config.DNS_QUERY_SIZE_THRESHOLD = 512  # bytes; larger queries are suspicious
+Config.PORT_SCAN_THRESHOLD      = 25   # distinct ports in PORT_SCAN_TIME_WINDOW seconds
+Config.SYN_FLOOD_THRESHOLD      = 200  # SYN packets per second
+Config.BRUTE_FORCE_THRESHOLD    = 12   # attempts per BRUTE_FORCE_TIME_WINDOW seconds
+Config.DDOS_THRESHOLD           = 1500 # packets per second
+Config.DNS_QUERY_SIZE_THRESHOLD = 700  # bytes; larger queries are suspicious
 Config.SUSPICIOUS_PORTS         = {4444, 1337, 31337, ...}
 Config.KNOWN_MALICIOUS_IPS      = {"x.x.x.x", ...}  # load from threat intel feeds
 Config.PHISHING_DOMAINS         = {"example-phish-domain.com", ...}
-Config.DATA_EXFIL_THRESHOLD_BYTES = 10485760  # bytes per DATA_EXFIL_TIME_WINDOW
-Config.TRAFFIC_ANOMALY_MULTIPLIER = 3.0       # spike factor over baseline
+Config.DATA_EXFIL_THRESHOLD_BYTES = 52428800  # bytes per DATA_EXFIL_TIME_WINDOW
+Config.TRAFFIC_ANOMALY_MULTIPLIER = 3.5       # spike factor over baseline
+Config.SIEM_OUTPUT_FILE         = "siem/alerts.jsonl"
+Config.ALERT_WEBHOOK_URL        = "https://example.local/hook"
 ```
+
+Optional integration env vars:
+- `NSM_ALERT_WEBHOOK_URL`
+- `NSM_SLACK_WEBHOOK_URL`
+- `NSM_SMTP_HOST`, `NSM_SMTP_PORT`, `NSM_SMTP_USERNAME`, `NSM_SMTP_PASSWORD`
+- `NSM_ALERT_EMAIL_FROM`, `NSM_ALERT_EMAIL_TO`
+- `NSM_SIEM_OUTPUT_FILE`
 
 ---
 

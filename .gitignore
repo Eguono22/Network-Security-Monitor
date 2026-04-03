@@ -9,5 +9,8 @@ build/
 *.egg
 .pytest_cache/
 .mypy_cache/
+.uv-cache/
+pytest-cache-files-*/
+.test_tmp/
 alerts.log
 *.log
