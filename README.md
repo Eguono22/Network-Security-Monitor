@@ -76,6 +76,9 @@ python main.py --simulate --no-dashboard
 ```bash
 sudo python main.py --live
 sudo python main.py --live --interface eth0
+python main.py --list-interfaces
+python main.py --live --interface eth0 --live-duration 1800
+python main.py --live --profile office
 ```
 
 ### View Past Alerts
@@ -112,6 +115,25 @@ Optional integration env vars:
 - `NSM_SMTP_HOST`, `NSM_SMTP_PORT`, `NSM_SMTP_USERNAME`, `NSM_SMTP_PASSWORD`
 - `NSM_ALERT_EMAIL_FROM`, `NSM_ALERT_EMAIL_TO`
 - `NSM_SIEM_OUTPUT_FILE`
+
+Baseline profiles:
+- `dev`
+- `office`
+- `datacenter`
+
+You can load a profile at runtime:
+
+```bash
+python main.py --simulate --profile office
+python main.py --live --profile datacenter --profile-file config_profiles.json
+```
+
+Slack validation:
+
+```bash
+set NSM_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ
+python main.py --simulate --no-dashboard
+```
 
 ---
 

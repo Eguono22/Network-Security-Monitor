@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from collections import Counter
 from typing import Optional
 
 from .alert_manager import AlertManager
@@ -62,11 +63,14 @@ class Dashboard:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> None:
+    def run(self, duration_seconds: float | None = None) -> None:
         """Block and refresh the dashboard at :attr:`~Config.DASHBOARD_REFRESH_INTERVAL`."""
+        start = time.time()
         try:
             while True:
                 self._render()
+                if duration_seconds and (time.time() - start) >= duration_seconds:
+                    break
                 time.sleep(self._cfg.DASHBOARD_REFRESH_INTERVAL)
         except KeyboardInterrupt:
             self._clear_screen()
@@ -126,6 +130,15 @@ class Dashboard:
 
         # Alert summary
         alert_stats = self._alert_manager.get_stats()
+        all_alerts = self._alert_manager.get_recent(max(alert_stats["total"], 1))
+        now = time.time()
+        rate_last_minute = sum(1 for a in all_alerts if a.timestamp >= (now - 60))
+        five_minute_alerts = [a for a in all_alerts if a.timestamp >= (now - 300)]
+        offender = "none"
+        if five_minute_alerts:
+            top_src, count = Counter(a.src_ip for a in five_minute_alerts).most_common(1)[0]
+            offender = f"{top_src} ({count} alerts)"
+
         lines.append("  ALERT SUMMARY")
         lines.append(f"  Total alerts    : {alert_stats['total']:,}")
         sev = alert_stats["by_severity"]
@@ -135,6 +148,8 @@ class Dashboard:
         lines.append(
             f"  Medium / Low    : {sev.get('MEDIUM', 0):,} / {sev.get('LOW', 0):,}"
         )
+        lines.append(f"  Alert rate/min  : {rate_last_minute:,}")
+        lines.append(f"  Top offender 5m : {offender}")
         lines.append("")
 
         # Recent alerts

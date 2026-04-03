@@ -228,7 +228,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    mode = parser.add_mutually_exclusive_group(required=True)
+    mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument(
         "--live",
         action="store_true",
@@ -247,6 +247,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--interface", "-i", default="", help="Network interface name.")
     parser.add_argument(
+        "--list-interfaces",
+        action="store_true",
+        help="List detected interfaces and exit.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="",
+        help="Baseline profile name from config_profiles.json (e.g. dev, office, datacenter).",
+    )
+    parser.add_argument(
+        "--profile-file",
+        default="config_profiles.json",
+        help="Path to profile JSON file (default: config_profiles.json).",
+    )
+    parser.add_argument(
         "--log-file",
         default="alerts.log",
         help="Path to the alert log file (default: alerts.log).",
@@ -261,6 +276,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="Simulation run time in seconds (default: 5).",
+    )
+    parser.add_argument(
+        "--live-duration",
+        type=float,
+        default=0.0,
+        help="Stop live mode after N seconds (0 = run until Ctrl+C).",
     )
     return parser
 
@@ -280,14 +301,44 @@ def _print_alerts_from_file(path: str) -> int:
     return 0
 
 
+def _list_interfaces() -> int:
+    try:
+        from scapy.interfaces import get_if_list
+    except ImportError:
+        print("Scapy is not installed. Cannot enumerate interfaces.", file=sys.stderr)
+        return 1
+
+    interfaces = get_if_list()
+    if not interfaces:
+        print("No interfaces found.")
+        return 0
+    for iface in interfaces:
+        print(iface)
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.list_interfaces:
+        return _list_interfaces()
+
+    if not (args.live or args.simulate or args.show_alerts):
+        parser.error("One of --live, --simulate, or --show-alerts is required.")
 
     if args.show_alerts:
         return _print_alerts_from_file(args.show_alerts)
 
     config = Config()
+    if args.profile:
+        if not config.apply_profile(args.profile, args.profile_file):
+            print(
+                f"Failed to load profile '{args.profile}' from {args.profile_file}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Loaded profile: {config.PROFILE_NAME}")
     config.ALERT_LOG_FILE = args.log_file
     if args.interface:
         config.INTERFACE = args.interface
@@ -331,15 +382,19 @@ def main(argv: list | None = None) -> int:
 
     if args.no_dashboard:
         print("Monitoring… press Ctrl+C to stop.")
+        deadline = time.time() + args.live_duration if args.live_duration > 0 else None
         try:
             while monitor.is_running:
+                if deadline and time.time() >= deadline:
+                    break
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
         monitor.stop()
     else:
         dashboard = Dashboard(monitor, config)
-        dashboard.run()
+        run_duration = args.live_duration if args.live_duration > 0 else None
+        dashboard.run(duration_seconds=run_duration)
         monitor.stop()
 
     return 0

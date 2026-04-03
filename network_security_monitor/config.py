@@ -1,6 +1,8 @@
 """Configuration for the Network Security Monitor."""
 
+import json
 import os
+from pathlib import Path
 from typing import Set
 
 
@@ -132,6 +134,8 @@ class Config:
     # ---------------------------------------------------------------------------
     DASHBOARD_REFRESH_INTERVAL: float = 1.0  # seconds
     DASHBOARD_TOP_TALKERS_COUNT: int = 10
+    PROFILE_NAME: str = "custom"
+    PROFILE_FILE: str = "config_profiles.json"
 
     def __init__(self):
         # Lightweight env-based overrides for deployment flexibility.
@@ -147,3 +151,46 @@ class Config:
         self.ALERT_EMAIL_FROM = os.getenv("NSM_ALERT_EMAIL_FROM", self.ALERT_EMAIL_FROM)
         self.ALERT_EMAIL_TO = os.getenv("NSM_ALERT_EMAIL_TO", self.ALERT_EMAIL_TO)
         self.SIEM_OUTPUT_FILE = os.getenv("NSM_SIEM_OUTPUT_FILE", self.SIEM_OUTPUT_FILE)
+
+    def apply_profile(self, profile_name: str, profile_file: str | None = None) -> bool:
+        """Apply threshold overrides from a named profile file.
+
+        Returns ``True`` when the profile exists and is applied.
+        """
+        profile_path = Path(profile_file or self.PROFILE_FILE)
+        if not profile_path.exists():
+            return False
+
+        try:
+            with open(profile_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return False
+
+        profiles = data.get("profiles", data)
+        values = profiles.get(profile_name)
+        if not isinstance(values, dict):
+            return False
+
+        for key, value in values.items():
+            if not hasattr(self, key):
+                continue
+            setattr(self, key, self._coerce_value(getattr(self, key), value))
+
+        self.PROFILE_NAME = profile_name
+        self.PROFILE_FILE = str(profile_path)
+        return True
+
+    @staticmethod
+    def _coerce_value(current, value):
+        if isinstance(current, set):
+            return set(value) if isinstance(value, (list, set, tuple)) else current
+        if isinstance(current, bool):
+            return bool(value)
+        if isinstance(current, int) and not isinstance(current, bool):
+            return int(value)
+        if isinstance(current, float):
+            return float(value)
+        if isinstance(current, str):
+            return str(value)
+        return value
