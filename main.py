@@ -24,6 +24,7 @@ Show recent alerts from a previous run's log file::
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import sys
@@ -284,6 +285,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Stop live mode after N seconds (0 = run until Ctrl+C).",
     )
+    parser.add_argument(
+        "--save-tuning",
+        default="",
+        help="Write tuning guidance and suggested profile overrides to a JSON file.",
+    )
     return parser
 
 
@@ -321,7 +327,7 @@ def _print_integration_status(config: Config) -> None:
         print("  Tip: set NSM_SLACK_WEBHOOK_URL to forward alerts immediately.")
 
 
-def _print_tuning_suggestions(monitor: NetworkMonitor, config: Config) -> None:
+def _tuning_report(monitor: NetworkMonitor, config: Config) -> dict:
     am = monitor.get_alert_manager()
     stats = monitor.get_stats()
     alert_stats = am.get_stats()
@@ -336,34 +342,58 @@ def _print_tuning_suggestions(monitor: NetworkMonitor, config: Config) -> None:
         src, count = Counter(a.src_ip for a in recent_5m).most_common(1)[0]
         top_offender = f"{src} ({count})"
 
-    print("\nTuning guidance:")
-    print(f"  Alerts/min observed : {alerts_per_minute:.2f}")
-    print(f"  Top offender (5m)   : {top_offender}")
-
     suggestions = []
+    overrides: dict = {}
     by_type = alert_stats["by_threat_type"]
     if alerts_per_minute > 20:
         suggestions.append(
             f"High alert volume: raise TRAFFIC_ANOMALY_MIN_PACKETS (current {config.TRAFFIC_ANOMALY_MIN_PACKETS}) "
             f"or TRAFFIC_ANOMALY_MULTIPLIER (current {config.TRAFFIC_ANOMALY_MULTIPLIER})."
         )
+        overrides["TRAFFIC_ANOMALY_MIN_PACKETS"] = int(config.TRAFFIC_ANOMALY_MIN_PACKETS * 1.2)
+        overrides["TRAFFIC_ANOMALY_MULTIPLIER"] = round(config.TRAFFIC_ANOMALY_MULTIPLIER + 0.3, 2)
     if by_type.get("DDOS", 0) >= 3:
         suggestions.append(
             f"Frequent DDoS alerts: consider increasing DDOS_THRESHOLD (current {config.DDOS_THRESHOLD})."
         )
+        overrides["DDOS_THRESHOLD"] = int(config.DDOS_THRESHOLD * 1.2)
     if by_type.get("BRUTE_FORCE", 0) >= 3:
         suggestions.append(
             f"Frequent brute-force alerts: consider increasing BRUTE_FORCE_THRESHOLD (current {config.BRUTE_FORCE_THRESHOLD})."
         )
+        overrides["BRUTE_FORCE_THRESHOLD"] = int(config.BRUTE_FORCE_THRESHOLD + 2)
     if total == 0:
         suggestions.append(
             "No alerts detected: lower PORT_SCAN_THRESHOLD / BRUTE_FORCE_THRESHOLD slightly to increase sensitivity."
         )
+        overrides["PORT_SCAN_THRESHOLD"] = max(1, int(config.PORT_SCAN_THRESHOLD * 0.85))
+        overrides["BRUTE_FORCE_THRESHOLD"] = max(1, int(config.BRUTE_FORCE_THRESHOLD * 0.85))
     if not suggestions:
         suggestions.append("Current thresholds look stable for this traffic sample.")
+    return {
+        "profile": config.PROFILE_NAME,
+        "alerts_total": total,
+        "alerts_per_minute": round(alerts_per_minute, 2),
+        "top_offender_5m": top_offender,
+        "suggestions": suggestions,
+        "suggested_overrides": overrides,
+    }
 
-    for item in suggestions:
+
+def _print_tuning_suggestions(monitor: NetworkMonitor, config: Config) -> dict:
+    report = _tuning_report(monitor, config)
+    print("\nTuning guidance:")
+    print(f"  Alerts/min observed : {report['alerts_per_minute']:.2f}")
+    print(f"  Top offender (5m)   : {report['top_offender_5m']}")
+    for item in report["suggestions"]:
         print(f"  - {item}")
+    return report
+
+
+def _save_tuning_report(path: str, report: dict) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    print(f"Tuning report saved to: {path}")
 
 
 def _list_interfaces() -> int:
@@ -429,7 +459,9 @@ def main(argv: list | None = None) -> int:
                 print(f"              {sev}: {count}")
         print(f"{'-' * 60}")
         _print_integration_status(config)
-        _print_tuning_suggestions(monitor, config)
+        report = _print_tuning_suggestions(monitor, config)
+        if args.save_tuning:
+            _save_tuning_report(args.save_tuning, report)
 
         if not args.no_dashboard:
             dashboard = Dashboard(monitor, config)
@@ -459,14 +491,18 @@ def main(argv: list | None = None) -> int:
             pass
         monitor.stop()
         _print_integration_status(config)
-        _print_tuning_suggestions(monitor, config)
+        report = _print_tuning_suggestions(monitor, config)
+        if args.save_tuning:
+            _save_tuning_report(args.save_tuning, report)
     else:
         dashboard = Dashboard(monitor, config)
         run_duration = args.live_duration if args.live_duration > 0 else None
         dashboard.run(duration_seconds=run_duration)
         monitor.stop()
         _print_integration_status(config)
-        _print_tuning_suggestions(monitor, config)
+        report = _print_tuning_suggestions(monitor, config)
+        if args.save_tuning:
+            _save_tuning_report(args.save_tuning, report)
 
     return 0
 

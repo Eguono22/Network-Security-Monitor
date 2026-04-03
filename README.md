@@ -133,6 +133,7 @@ You can load a profile at runtime:
 ```bash
 python main.py --simulate --profile office
 python main.py --live --profile datacenter --profile-file config_profiles.json
+python main.py --live --profile office --live-duration 1800 --save-tuning tuning.json
 ```
 
 Slack validation:
@@ -147,6 +148,9 @@ Deployment hardening assets:
 - `deploy/windows/install_task.ps1`
 - `deploy/windows/run_nsm.ps1`
 - `.env.example` for secret/env setup
+- `RUNBOOK.md` for incident response workflow
+
+Tip: `Config` auto-loads local `.env` values (if present) before env var reads.
 
 ---
 

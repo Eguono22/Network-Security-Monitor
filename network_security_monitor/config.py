@@ -139,7 +139,8 @@ class Config:
     PROFILE_NAME: str = "custom"
     PROFILE_FILE: str = "config_profiles.json"
 
-    def __init__(self):
+    def __init__(self, env_file: str | None = ".env"):
+        self._load_dotenv(env_file)
         # Lightweight env-based overrides for deployment flexibility.
         self.ALERT_NOTIFY_MIN_SEVERITY = os.getenv(
             "NSM_ALERT_NOTIFY_MIN_SEVERITY", self.ALERT_NOTIFY_MIN_SEVERITY
@@ -159,6 +160,28 @@ class Config:
         self.ALERT_LOG_BACKUP_COUNT = int(
             os.getenv("NSM_ALERT_LOG_BACKUP_COUNT", str(self.ALERT_LOG_BACKUP_COUNT))
         )
+
+    @staticmethod
+    def _load_dotenv(env_file: str | None) -> None:
+        """Load simple KEY=VALUE lines into the process environment."""
+        if not env_file:
+            return
+        path = Path(env_file)
+        if not path.exists():
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for raw in fh:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except OSError:
+            return
 
     def apply_profile(self, profile_name: str, profile_file: str | None = None) -> bool:
         """Apply threshold overrides from a named profile file.
