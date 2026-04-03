@@ -71,6 +71,15 @@ With text-only output (no dashboard):
 python main.py --simulate --no-dashboard
 ```
 
+Fast integration wiring (without editing files):
+
+```bash
+python main.py --simulate --no-dashboard \
+  --slack-webhook-url https://hooks.slack.com/services/XXX/YYY/ZZZ \
+  --notify-min-severity HIGH
+python main.py --simulate --no-dashboard --siem-output-file siem/alerts.jsonl
+```
+
 ### Live Capture (requires root / CAP_NET_RAW)
 
 ```bash
@@ -100,6 +109,7 @@ Key settings:
 
 ```python
 Config.PORT_SCAN_THRESHOLD      = 25   # distinct ports in PORT_SCAN_TIME_WINDOW seconds
+Config.PORT_SCAN_TRUSTED_SOURCES = {"192.168.1.1"}  # optional allowlist for known internal scanners
 Config.SYN_FLOOD_THRESHOLD      = 200  # SYN packets per second
 Config.BRUTE_FORCE_THRESHOLD    = 12   # attempts per BRUTE_FORCE_TIME_WINDOW seconds
 Config.DDOS_THRESHOLD           = 1500 # packets per second
@@ -119,10 +129,12 @@ Optional integration env vars:
 - `NSM_SMTP_HOST`, `NSM_SMTP_PORT`, `NSM_SMTP_USERNAME`, `NSM_SMTP_PASSWORD`
 - `NSM_ALERT_EMAIL_FROM`, `NSM_ALERT_EMAIL_TO`
 - `NSM_SIEM_OUTPUT_FILE`
+- `NSM_PORT_SCAN_TRUSTED_SOURCES` (comma-separated, e.g. `192.168.1.1,10.0.0.10`)
 
 Baseline profiles:
 - `dev`
 - `office`
+- `office_tuned` (reduced anomaly noise from latest simulation baseline)
 - `datacenter`
 - `home_lab`
 - `corp_wifi`
@@ -132,6 +144,7 @@ You can load a profile at runtime:
 
 ```bash
 python main.py --simulate --profile office
+python main.py --simulate --profile office_tuned
 python main.py --live --profile datacenter --profile-file config_profiles.json
 python main.py --live --profile office --live-duration 1800 --save-tuning tuning.json
 ```
@@ -141,6 +154,13 @@ Slack validation:
 ```bash
 set NSM_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ
 python main.py --simulate --no-dashboard
+```
+
+Release-readiness quick check:
+
+```bash
+python main.py --simulate --profile office_tuned --no-dashboard --save-tuning tuning-live.json
+pytest tests/ -v
 ```
 
 Deployment hardening assets:
@@ -160,7 +180,7 @@ Tip: `Config` auto-loads local `.env` values (if present) before env var reads.
 pytest tests/ -v
 ```
 
-All 91 tests run without root access or a live network interface.
+All 102 tests run without root access or a live network interface.
 
 ---
 

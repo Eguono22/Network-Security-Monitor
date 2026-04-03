@@ -290,6 +290,27 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Write tuning guidance and suggested profile overrides to a JSON file.",
     )
+    parser.add_argument(
+        "--slack-webhook-url",
+        default="",
+        help="Override Slack webhook URL for this run.",
+    )
+    parser.add_argument(
+        "--alert-webhook-url",
+        default="",
+        help="Override generic alert webhook URL for this run.",
+    )
+    parser.add_argument(
+        "--siem-output-file",
+        default="",
+        help="Override SIEM JSONL output file for this run.",
+    )
+    parser.add_argument(
+        "--notify-min-severity",
+        default="",
+        choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+        help="Minimum severity for outbound notifications (LOW|MEDIUM|HIGH|CRITICAL).",
+    )
     return parser
 
 
@@ -324,7 +345,9 @@ def _print_integration_status(config: Config) -> None:
         print(f"  Configured: {', '.join(configured)}")
     else:
         print("  Configured: none")
-        print("  Tip: set NSM_SLACK_WEBHOOK_URL to forward alerts immediately.")
+        print(
+            "  Tip: set NSM_SLACK_WEBHOOK_URL or pass --slack-webhook-url to forward alerts immediately."
+        )
 
 
 def _tuning_report(monitor: NetworkMonitor, config: Config) -> dict:
@@ -437,6 +460,14 @@ def main(argv: list | None = None) -> int:
     config.ALERT_LOG_FILE = args.log_file
     if args.interface:
         config.INTERFACE = args.interface
+    if args.slack_webhook_url:
+        config.SLACK_WEBHOOK_URL = args.slack_webhook_url
+    if args.alert_webhook_url:
+        config.ALERT_WEBHOOK_URL = args.alert_webhook_url
+    if args.siem_output_file:
+        config.SIEM_OUTPUT_FILE = args.siem_output_file
+    if args.notify_min_severity:
+        config.ALERT_NOTIFY_MIN_SEVERITY = args.notify_min_severity
 
     monitor = NetworkMonitor(config)
 

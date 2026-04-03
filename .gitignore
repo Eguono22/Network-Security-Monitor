@@ -15,3 +15,5 @@ pytest-cache-files-*/
 .env
 alerts.log
 *.log
+siem/
+tuning*.json

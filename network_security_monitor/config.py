@@ -21,6 +21,9 @@ class Config:
     # PORT_SCAN_TIME_WINDOW seconds before it is flagged as a port scan.
     PORT_SCAN_THRESHOLD: int = 25
     PORT_SCAN_TIME_WINDOW: int = 15  # seconds
+    # Optional allowlist of source IPs that should not trigger port-scan alerts
+    # (useful for known internal discovery/scanner infrastructure).
+    PORT_SCAN_TRUSTED_SOURCES: Set[str] = set()
 
     # ---------------------------------------------------------------------------
     # SYN-flood detection
@@ -160,6 +163,11 @@ class Config:
         self.ALERT_LOG_BACKUP_COUNT = int(
             os.getenv("NSM_ALERT_LOG_BACKUP_COUNT", str(self.ALERT_LOG_BACKUP_COUNT))
         )
+        trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
+        if trusted_sources.strip():
+            self.PORT_SCAN_TRUSTED_SOURCES = {
+                ip.strip() for ip in trusted_sources.split(",") if ip.strip()
+            }
 
     @staticmethod
     def _load_dotenv(env_file: str | None) -> None:

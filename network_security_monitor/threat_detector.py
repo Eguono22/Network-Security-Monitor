@@ -70,6 +70,8 @@ class PortScanDetector:
     def inspect(self, packet: Packet) -> List[Alert]:
         if packet.dst_port is None:
             return []
+        if packet.src_ip in self._cfg.PORT_SCAN_TRUSTED_SOURCES:
+            return []
 
         now = packet.timestamp
         window = self._cfg.PORT_SCAN_TIME_WINDOW

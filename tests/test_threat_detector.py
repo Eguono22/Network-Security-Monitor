@@ -91,6 +91,30 @@ class TestPortScanDetector:
         port_scan_alerts = [a for a in alerts if a.threat_type == ThreatType.PORT_SCAN]
         assert len(port_scan_alerts) == 1
 
+    def test_no_alert_for_trusted_source(self):
+        cfg = _make_config(
+            PORT_SCAN_THRESHOLD=5,
+            PORT_SCAN_TIME_WINDOW=30,
+            PORT_SCAN_TRUSTED_SOURCES={"192.168.1.1"},
+        )
+        det = PortScanDetector(cfg)
+        alerts = []
+        for port in range(1, 15):
+            alerts.extend(det.inspect(_pkt(src_ip="192.168.1.1", dst_port=port)))
+        assert not any(a.threat_type == ThreatType.PORT_SCAN for a in alerts)
+
+    def test_non_trusted_source_still_alerts(self):
+        cfg = _make_config(
+            PORT_SCAN_THRESHOLD=5,
+            PORT_SCAN_TIME_WINDOW=30,
+            PORT_SCAN_TRUSTED_SOURCES={"192.168.1.1"},
+        )
+        det = PortScanDetector(cfg)
+        alerts = []
+        for port in range(1, 15):
+            alerts.extend(det.inspect(_pkt(src_ip="192.168.1.99", dst_port=port)))
+        assert any(a.threat_type == ThreatType.PORT_SCAN for a in alerts)
+
 
 # ---------------------------------------------------------------------------
 # SynFloodDetector

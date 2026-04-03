@@ -33,7 +33,16 @@
 
 ## 6. Post-Incident Tuning
 - Run baseline/tuning output:
-  - `python main.py --simulate --profile office --save-tuning tuning.json`
-  - `python main.py --live --profile office --live-duration 1800 --save-tuning tuning.json`
+  - `python main.py --simulate --profile office_tuned --save-tuning tuning.json`
+  - `python main.py --live --profile office_tuned --live-duration 1800 --save-tuning tuning.json`
 - Apply recommended overrides to `config_profiles.json`.
 - Re-run baseline and verify lower false positives without losing detections.
+
+## 7. Integration Validation
+- Slack/webhook smoke test:
+  - `python main.py --simulate --no-dashboard --slack-webhook-url <url> --notify-min-severity HIGH`
+  - or `python main.py --simulate --no-dashboard --alert-webhook-url <url> --notify-min-severity HIGH`
+- SIEM file smoke test:
+  - `python main.py --simulate --no-dashboard --siem-output-file siem/alerts.jsonl`
+  - confirm fresh JSON lines appended to `siem/alerts.jsonl`
+- If none are configured, update `.env` from `.env.example` and rerun.
