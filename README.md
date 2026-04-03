@@ -100,6 +100,17 @@ After simulation/live runs, NSM now prints:
 python main.py --show-alerts alerts.log
 ```
 
+### Vercel Deployment (API only)
+
+This repository now includes a minimal serverless entrypoint at `api/index.py`
+for Vercel Python runtime compatibility.
+
+- `GET /` returns service metadata
+- `GET /health` returns a health check response
+
+Note: live packet capture (`--live`) requires raw network access and a
+long-running process, so it must run on a VM/container host rather than Vercel.
+
 ---
 
 ## Configuration
