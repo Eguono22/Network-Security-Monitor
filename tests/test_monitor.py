@@ -162,3 +162,15 @@ class TestNetworkMonitorLifecycle:
         from network_security_monitor.alert_manager import AlertManager
         monitor = NetworkMonitor(_cfg())
         assert isinstance(monitor.get_alert_manager(), AlertManager)
+
+    def test_soc_automation_runs_for_generated_alert(self):
+        cfg = _cfg(
+            SUSPICIOUS_PORTS={4444},
+            SOC_AUTOMATION_MIN_SEVERITY="MEDIUM",
+            SOC_AUTOMATION_COOLDOWN_SECONDS=0,
+        )
+        monitor = NetworkMonitor(cfg)
+        monitor.process_packet(_pkt(dst_port=4444))
+        stats = monitor.get_soc_automation_stats()
+        assert stats["executions"] >= 1
+        assert stats["actions"] >= 1

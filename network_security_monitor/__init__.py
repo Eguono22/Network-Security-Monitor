@@ -13,6 +13,8 @@ from .packet_analyzer import PacketAnalyzer
 from .threat_detector import ThreatDetector
 from .alert_manager import AlertManager
 from .monitor import NetworkMonitor
+from .soc_automation import SOCAutomationEngine
+from .incident_manager import IncidentManager
 
 __all__ = [
     "Config",
@@ -24,4 +26,6 @@ __all__ = [
     "ThreatDetector",
     "AlertManager",
     "NetworkMonitor",
+    "SOCAutomationEngine",
+    "IncidentManager",
 ]

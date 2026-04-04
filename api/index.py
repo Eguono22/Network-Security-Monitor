@@ -1,9 +1,144 @@
-"""Minimal Vercel-compatible API entrypoint."""
+"""Vercel-compatible API entrypoint with alert dashboard and network watcher."""
+
+from __future__ import annotations
+
+import html
+import json
+import os
+import re
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
 
 from flask import Flask, Response, jsonify
 
 
 app = Flask(__name__)
+
+_ALERT_LINE_RE = re.compile(
+    r"\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+"
+    r"\[(?P<severity>[A-Z]+)\]\s+"
+    r"\[(?P<threat>[A-Z_]+)\]\s+"
+    r"src=(?P<src>\S+)"
+)
+_MAX_RECENT = 100
+
+
+def _tail_lines(path: Path, max_lines: int = 400) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+    return lines[-max_lines:]
+
+
+def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
+    path = Path(os.getenv("NSM_ALERT_LOG_FILE", "alerts.log"))
+    lines = _tail_lines(path)
+    alerts = []
+    for raw in reversed(lines):
+        m = _ALERT_LINE_RE.search(raw)
+        if not m:
+            continue
+        alerts.append(
+            {
+                "timestamp": m.group("ts"),
+                "severity": m.group("severity"),
+                "threat_type": m.group("threat"),
+                "src_ip": m.group("src"),
+                "raw": raw,
+            }
+        )
+        if len(alerts) >= limit:
+            break
+    return list(reversed(alerts))
+
+
+def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
+    path = Path(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+    lines = _tail_lines(path)
+    actions = []
+    for raw in reversed(lines):
+        try:
+            actions.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+        if len(actions) >= limit:
+            break
+    return list(reversed(actions))
+
+
+def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
+    path = Path(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    lines = _tail_lines(path)
+    incidents = []
+    for raw in reversed(lines):
+        try:
+            incidents.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+        if len(incidents) >= limit:
+            break
+    return list(reversed(incidents))
+
+
+def _network_watcher_summary() -> dict:
+    alerts = _load_recent_alerts()
+    actions = _load_soc_actions()
+    by_severity = Counter(a["severity"] for a in alerts)
+    by_threat = Counter(a["threat_type"] for a in alerts)
+    by_src = Counter(a["src_ip"] for a in alerts)
+
+    top_src = "none"
+    if by_src:
+        src, count = by_src.most_common(1)[0]
+        top_src = f"{src} ({count})"
+
+    now = datetime.now(timezone.utc).isoformat()
+    health = "stable"
+    if by_severity.get("CRITICAL", 0) > 0:
+        health = "critical-events-present"
+    elif by_severity.get("HIGH", 0) >= 5:
+        health = "high-alert-volume"
+
+    return {
+        "timestamp_utc": now,
+        "health": health,
+        "recent_alerts": len(alerts),
+        "recent_soc_actions": len(actions),
+        "top_source": top_src,
+        "alerts_by_severity": dict(by_severity),
+        "alerts_by_threat": dict(by_threat),
+    }
+
+
+def _soc_management_snapshot() -> dict:
+    alerts = _load_recent_alerts()
+    actions = _load_soc_actions()
+    incidents = _load_incidents()
+    open_incidents = sum(1 for i in incidents if i.get("status") == "open")
+    critical_incidents = sum(1 for i in incidents if i.get("severity") == "CRITICAL")
+    if not incidents:
+        open_incidents = sum(1 for a in alerts if a["severity"] in {"HIGH", "CRITICAL"})
+        critical_incidents = sum(1 for a in alerts if a["severity"] == "CRITICAL")
+    threat_queue = Counter(a["threat_type"] for a in alerts).most_common(6)
+    analyst_queue = Counter(
+        a.get("action", {}).get("queue", "soc-triage")
+        for a in actions
+        if isinstance(a, dict)
+    ).most_common(6)
+    return {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "open_incidents": open_incidents,
+        "critical_incidents": critical_incidents,
+        "automation_actions": len(actions),
+        "recent_alerts": len(alerts),
+        "recent_incidents": len(incidents),
+        "threat_queue": threat_queue,
+        "analyst_queue": analyst_queue,
+    }
 
 
 @app.get("/")
@@ -101,8 +236,20 @@ def root():
         <p>Use <code>/health</code> for uptime probes and platform monitoring.</p>
       </section>
       <section class="item">
-        <strong>Live Monitoring</strong>
-        <p>Run <code>main.py --live</code> on a VM/container with packet access.</p>
+        <strong>Alert Dashboard</strong>
+        <p>Browse recent alerts at <code>/dashboard</code>.</p>
+      </section>
+      <section class="item">
+        <strong>Network Watcher</strong>
+        <p>View summary at <code>/network-watcher</code> or JSON at <code>/api/network-watcher</code>.</p>
+      </section>
+      <section class="item">
+        <strong>SOC Management</strong>
+        <p>Use <code>/soc-management</code> for KPI and incident queue operations.</p>
+      </section>
+      <section class="item">
+        <strong>Incident API</strong>
+        <p>Query incident cases at <code>/api/incidents</code>.</p>
       </section>
     </div>
   </main>
@@ -115,3 +262,299 @@ def root():
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
+
+
+@app.get("/api/alerts")
+def api_alerts():
+    return jsonify(
+        {
+            "count": len(_load_recent_alerts()),
+            "alerts": _load_recent_alerts(),
+        }
+    )
+
+
+@app.get("/api/network-watcher")
+def api_network_watcher():
+    return jsonify(_network_watcher_summary())
+
+
+@app.get("/api/soc-summary")
+def api_soc_summary():
+    return jsonify(_soc_management_snapshot())
+
+
+@app.get("/api/incidents")
+def api_incidents():
+    incidents = _load_incidents()
+    return jsonify({"count": len(incidents), "incidents": incidents})
+
+
+@app.get("/dashboard")
+def dashboard():
+    alerts = _load_recent_alerts()
+    rows = []
+    for alert in reversed(alerts[-50:]):
+        sev = html.escape(alert["severity"])
+        threat = html.escape(alert["threat_type"])
+        src = html.escape(alert["src_ip"])
+        ts = html.escape(alert["timestamp"])
+        raw = html.escape(alert["raw"])
+        rows.append(
+            "<tr>"
+            f"<td>{ts}</td>"
+            f"<td><strong>{sev}</strong></td>"
+            f"<td>{threat}</td>"
+            f"<td>{src}</td>"
+            f"<td><code>{raw}</code></td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(
+            "<tr><td colspan='5'>No alerts found yet. Run monitor and generate alerts first.</td></tr>"
+        )
+
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NSM Alert Dashboard</title>
+  <style>
+    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
+    main {{ max-width: 1200px; margin: 24px auto; padding: 0 16px; }}
+    h1 {{ margin: 0 0 8px; }}
+    p {{ color: #334155; }}
+    .card {{ background: #fff; border: 1px solid #dbe4ee; border-radius: 12px; overflow: auto; }}
+    table {{ width: 100%; border-collapse: collapse; min-width: 900px; }}
+    th, td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }}
+    th {{ background: #f1f5f9; }}
+    code {{ white-space: pre-wrap; word-break: break-word; }}
+    .links a {{ margin-right: 12px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Alert Dashboard</h1>
+    <p>Recent alerts from <code>alerts.log</code>. Showing latest {len(alerts)} parsed records.</p>
+    <p class="links"><a href="/api/alerts">JSON API</a><a href="/network-watcher">Network Watcher</a><a href="/">Home</a></p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Severity</th>
+            <th>Threat</th>
+            <th>Source</th>
+            <th>Raw</th>
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(rows)}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>"""
+    return Response(page, mimetype="text/html")
+
+
+@app.get("/network-watcher")
+def network_watcher():
+    summary = _network_watcher_summary()
+    by_sev = summary["alerts_by_severity"]
+    by_threat = summary["alerts_by_threat"]
+    sev_lines = "".join(
+        f"<li>{html.escape(str(k))}: <strong>{v}</strong></li>"
+        for k, v in sorted(by_sev.items())
+    ) or "<li>No alert data</li>"
+    threat_lines = "".join(
+        f"<li>{html.escape(str(k))}: <strong>{v}</strong></li>"
+        for k, v in sorted(by_threat.items())
+    ) or "<li>No threat data</li>"
+
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NSM Network Watcher</title>
+  <style>
+    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
+    main {{ max-width: 980px; margin: 24px auto; padding: 0 16px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
+    .card {{ background: #fff; border: 1px solid #dbe4ee; border-radius: 12px; padding: 14px; }}
+    h1 {{ margin: 0 0 8px; }}
+    h2 {{ margin: 0 0 8px; font-size: 1.05rem; }}
+    p {{ margin: 6px 0; color: #334155; }}
+    ul {{ margin: 0; padding-left: 18px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Network Watcher</h1>
+    <p>Health: <strong>{html.escape(str(summary['health']))}</strong> | Updated: {html.escape(str(summary['timestamp_utc']))}</p>
+    <div class="grid">
+      <section class="card">
+        <h2>Recent Totals</h2>
+        <p>Alerts: <strong>{summary['recent_alerts']}</strong></p>
+        <p>SOC Actions: <strong>{summary['recent_soc_actions']}</strong></p>
+        <p>Top Source: <strong>{html.escape(str(summary['top_source']))}</strong></p>
+      </section>
+      <section class="card">
+        <h2>By Severity</h2>
+        <ul>{sev_lines}</ul>
+      </section>
+      <section class="card">
+        <h2>By Threat</h2>
+        <ul>{threat_lines}</ul>
+      </section>
+    </div>
+    <p><a href="/api/network-watcher">JSON API</a> | <a href="/dashboard">Alert Dashboard</a> | <a href="/">Home</a></p>
+  </main>
+</body>
+</html>"""
+    return Response(page, mimetype="text/html")
+
+
+@app.get("/soc-management")
+def soc_management():
+    snap = _soc_management_snapshot()
+    incidents = _load_incidents(limit=25)
+    threat_items = "".join(
+        f"<tr><td>{html.escape(str(name))}</td><td>{count}</td></tr>"
+        for name, count in snap["threat_queue"]
+    ) or "<tr><td colspan='2'>No queue data</td></tr>"
+    analyst_items = "".join(
+        f"<tr><td>{html.escape(str(name))}</td><td>{count}</td></tr>"
+        for name, count in snap["analyst_queue"]
+    ) or "<tr><td colspan='2'>No automation queue data</td></tr>"
+    incident_items = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(i.get('incident_id', 'n/a')))}</td>"
+        f"<td>{html.escape(str(i.get('severity', 'UNKNOWN')))}</td>"
+        f"<td>{html.escape(str(i.get('status', 'open')))}</td>"
+        f"<td>{html.escape(str(i.get('queue', 'soc-triage')))}</td>"
+        f"<td>{html.escape(str(i.get('src_ip', 'n/a')))}</td>"
+        f"<td>{html.escape(str(i.get('threat_type', 'UNKNOWN')))}</td>"
+        "</tr>"
+        for i in reversed(incidents[-15:])
+    ) or "<tr><td colspan='6'>No incidents created yet.</td></tr>"
+
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NSM SOC Management</title>
+  <style>
+    :root {{
+      --bg: #0b1220;
+      --panel: #111b2e;
+      --panel-2: #13223a;
+      --text: #e6edf7;
+      --muted: #9cb2cf;
+      --good: #2dd4bf;
+      --warn: #fbbf24;
+      --bad: #fb7185;
+      --line: #274468;
+      --brand: #38bdf8;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.14), transparent 38%),
+        radial-gradient(circle at 85% 100%, rgba(45, 212, 191, 0.12), transparent 35%),
+        var(--bg);
+      font-family: "Segoe UI", "Inter", sans-serif;
+    }}
+    main {{ max-width: 1180px; margin: 20px auto; padding: 0 16px 24px; }}
+    .top {{
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-bottom: 14px;
+    }}
+    h1 {{ margin: 0; letter-spacing: 0.01em; }}
+    .meta {{ color: var(--muted); font-size: 0.95rem; }}
+    .kpis {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .card {{
+      background: linear-gradient(160deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }}
+    .k {{ color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .v {{ font-size: 1.55rem; font-weight: 700; margin-top: 4px; }}
+    .v.good {{ color: var(--good); }}
+    .v.warn {{ color: var(--warn); }}
+    .v.bad {{ color: var(--bad); }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+    }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    .links a {{ color: var(--brand); margin-right: 10px; text-decoration: none; }}
+    .links a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="top">
+      <div>
+        <h1>SOC Management Dashboard</h1>
+        <div class="meta">Updated: {html.escape(snap["timestamp_utc"])}</div>
+      </div>
+      <div class="links">
+        <a href="/api/soc-summary">SOC JSON</a>
+        <a href="/api/incidents">Incidents JSON</a>
+        <a href="/dashboard">Alerts</a>
+        <a href="/network-watcher">Watcher</a>
+        <a href="/">Home</a>
+      </div>
+    </section>
+
+    <section class="kpis">
+      <article class="card"><div class="k">Open Incidents</div><div class="v warn">{snap['open_incidents']}</div></article>
+      <article class="card"><div class="k">Critical Incidents</div><div class="v bad">{snap['critical_incidents']}</div></article>
+      <article class="card"><div class="k">Automation Actions</div><div class="v good">{snap['automation_actions']}</div></article>
+      <article class="card"><div class="k">Recent Alerts</div><div class="v">{snap['recent_alerts']}</div></article>
+      <article class="card"><div class="k">Recent Cases</div><div class="v">{snap['recent_incidents']}</div></article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h3>Threat Queue</h3>
+        <table>
+          <thead><tr><th>Threat Type</th><th>Items</th></tr></thead>
+          <tbody>{threat_items}</tbody>
+        </table>
+      </article>
+      <article class="card">
+        <h3>Analyst Queue</h3>
+        <table>
+          <thead><tr><th>Queue</th><th>Items</th></tr></thead>
+          <tbody>{analyst_items}</tbody>
+        </table>
+      </article>
+      <article class="card">
+        <h3>Incident Cases</h3>
+        <table>
+          <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Queue</th><th>Source</th><th>Threat</th></tr></thead>
+          <tbody>{incident_items}</tbody>
+        </table>
+      </article>
+    </section>
+  </main>
+</body>
+</html>"""
+    return Response(page, mimetype="text/html")

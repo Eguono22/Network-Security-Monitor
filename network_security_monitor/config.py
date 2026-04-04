@@ -133,6 +133,15 @@ class Config:
     ALERT_EMAIL_TO: str = ""
     # Optional SIEM-style JSONL file output for alert forwarding.
     SIEM_OUTPUT_FILE: str = ""
+    # ---------------------------------------------------------------------------
+    # SOC automation
+    # ---------------------------------------------------------------------------
+    SOC_AUTOMATION_ENABLED: bool = True
+    SOC_AUTOMATION_MIN_SEVERITY: str = "HIGH"
+    SOC_AUTOMATION_COOLDOWN_SECONDS: int = 300
+    SOC_AUTOMATION_LOG_FILE: str = "soc_actions.log"
+    INCIDENTS_LOG_FILE: str = "incidents.jsonl"
+    SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL: bool = False
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -162,6 +171,27 @@ class Config:
         )
         self.ALERT_LOG_BACKUP_COUNT = int(
             os.getenv("NSM_ALERT_LOG_BACKUP_COUNT", str(self.ALERT_LOG_BACKUP_COUNT))
+        )
+        self.SOC_AUTOMATION_ENABLED = self._env_bool(
+            os.getenv("NSM_SOC_AUTOMATION_ENABLED"),
+            self.SOC_AUTOMATION_ENABLED,
+        )
+        self.SOC_AUTOMATION_MIN_SEVERITY = os.getenv(
+            "NSM_SOC_AUTOMATION_MIN_SEVERITY", self.SOC_AUTOMATION_MIN_SEVERITY
+        ).upper()
+        self.SOC_AUTOMATION_COOLDOWN_SECONDS = int(
+            os.getenv(
+                "NSM_SOC_AUTOMATION_COOLDOWN_SECONDS",
+                str(self.SOC_AUTOMATION_COOLDOWN_SECONDS),
+            )
+        )
+        self.SOC_AUTOMATION_LOG_FILE = os.getenv(
+            "NSM_SOC_AUTOMATION_LOG_FILE", self.SOC_AUTOMATION_LOG_FILE
+        )
+        self.INCIDENTS_LOG_FILE = os.getenv("NSM_INCIDENTS_LOG_FILE", self.INCIDENTS_LOG_FILE)
+        self.SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL = self._env_bool(
+            os.getenv("NSM_SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL"),
+            self.SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL,
         )
         trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
         if trusted_sources.strip():
@@ -233,3 +263,14 @@ class Config:
         if isinstance(current, str):
             return str(value)
         return value
+
+    @staticmethod
+    def _env_bool(raw: str | None, default: bool) -> bool:
+        if raw is None:
+            return default
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        return default

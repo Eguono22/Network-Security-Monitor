@@ -1,5 +1,7 @@
 # Network Security Monitor
 
+Project vision: evolve this into `SentinelNet`, a full Network Security Monitoring System (NSMS) with SOC workflows, incident response, and OT-aware monitoring.
+
 A Network Security Monitor (NSM) that continuously observes, analyzes, and detects suspicious activity across a network. It identifies cyber threats such as unauthorized access attempts, malware/C2 behavior, phishing indicators, potential data leaks, and unusual traffic patterns.
 
 ---
@@ -19,6 +21,15 @@ A Network Security Monitor (NSM) that continuously observes, analyzes, and detec
 | **Data Exfiltration** | High outbound byte volume from one source in a short window |
 | **Unusual Traffic** | Source packet-rate spike versus rolling baseline |
 
+SOC automation:
+- Playbook-based response actions for alerts (case creation, enrichment, containment recommendations)
+- Action cooldown per threat/source to avoid noisy duplicate automation
+- JSONL audit trail (`soc_actions.log`) for SOAR/SIEM ingestion
+
+Product planning docs:
+- `docs/SENTINELNET_PRD.md`
+- `docs/SENTINELNET_ROADMAP.md`
+
 ---
 
 ## Project Structure
@@ -33,6 +44,8 @@ network_security_monitor/
 ├── alert_manager.py     – Alert storage, logging, and callback integrations
 ├── monitor.py           – Main coordinator; live capture or replay mode
 └── dashboard.py         – Real-time CLI dashboard
+└── soc_automation.py    – SOC playbook execution and action audit logging
+└── incident_manager.py  – Incident case persistence (`incidents.jsonl`)
 
 tests/
 ├── test_models.py
@@ -107,6 +120,13 @@ for Vercel Python runtime compatibility.
 
 - `GET /` returns service metadata
 - `GET /health` returns a health check response
+- `GET /dashboard` shows a web alert dashboard (parsed from `alerts.log`)
+- `GET /network-watcher` shows watcher summary
+- `GET /soc-management` shows SOC management KPI and queue dashboard
+- `GET /api/alerts` returns recent alert records as JSON
+- `GET /api/network-watcher` returns watcher summary as JSON
+- `GET /api/soc-summary` returns SOC KPI/queue summary as JSON
+- `GET /api/incidents` returns incident case records as JSON
 
 Note: live packet capture (`--live`) requires raw network access and a
 long-running process, so it must run on a VM/container host rather than Vercel.
@@ -141,6 +161,12 @@ Optional integration env vars:
 - `NSM_ALERT_EMAIL_FROM`, `NSM_ALERT_EMAIL_TO`
 - `NSM_SIEM_OUTPUT_FILE`
 - `NSM_PORT_SCAN_TRUSTED_SOURCES` (comma-separated, e.g. `192.168.1.1,10.0.0.10`)
+- `NSM_SOC_AUTOMATION_ENABLED`
+- `NSM_SOC_AUTOMATION_MIN_SEVERITY`
+- `NSM_SOC_AUTOMATION_COOLDOWN_SECONDS`
+- `NSM_SOC_AUTOMATION_LOG_FILE`
+- `NSM_INCIDENTS_LOG_FILE`
+- `NSM_SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL`
 
 Baseline profiles:
 - `dev`
@@ -191,7 +217,8 @@ Tip: `Config` auto-loads local `.env` values (if present) before env var reads.
 pytest tests/ -v
 ```
 
-All 102 tests run without root access or a live network interface.
+All 110 tests run without root access or a live network interface
+(with API route tests skipped automatically when Flask is unavailable locally).
 
 ---
 

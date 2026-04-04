@@ -12,6 +12,7 @@ from .alert_manager import AlertManager
 from .config import Config
 from .models import Alert, Packet, TrafficStats
 from .packet_analyzer import PacketAnalyzer
+from .soc_automation import SOCAutomationEngine
 from .threat_detector import ThreatDetector
 
 logger = logging.getLogger("nsm.monitor")
@@ -47,6 +48,7 @@ class NetworkMonitor:
         self._analyzer = PacketAnalyzer()
         self._detector = ThreatDetector(self._cfg)
         self._alert_manager = AlertManager(self._cfg)
+        self._soc_automation = SOCAutomationEngine(self._cfg)
 
         self._stats = TrafficStats()
         self._protocol_counts: dict = defaultdict(int)
@@ -81,6 +83,8 @@ class NetworkMonitor:
         alerts = self._detector.inspect(packet)
         for alert in alerts:
             self._alert_manager.add(alert)
+            # SOC automation runs after alert persistence and notification.
+            self._soc_automation.handle_alert(alert)
 
         return alerts
 
@@ -192,6 +196,10 @@ class NetworkMonitor:
     def get_alert_manager(self) -> AlertManager:
         """Return the underlying :class:`~network_security_monitor.alert_manager.AlertManager`."""
         return self._alert_manager
+
+    def get_soc_automation_stats(self) -> dict:
+        """Return SOC automation execution counters."""
+        return self._soc_automation.get_stats()
 
     @property
     def is_running(self) -> bool:
