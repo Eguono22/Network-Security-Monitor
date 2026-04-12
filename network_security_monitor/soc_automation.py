@@ -6,14 +6,13 @@ severity. Actions are written to a JSONL audit log for downstream SOAR/SIEM use.
 
 from __future__ import annotations
 
-import json
-import os
 import time
 from typing import Dict, List, Tuple
 
 from .config import Config
 from .incident_manager import IncidentManager
 from .models import Alert, AlertSeverity, ThreatType
+from .storage import JsonlStore
 
 _SEVERITY_RANK = {
     AlertSeverity.LOW: 0,
@@ -29,6 +28,7 @@ class SOCAutomationEngine:
     def __init__(self, config: Config | None = None):
         self._cfg = config or Config()
         self._incident_manager = IncidentManager(self._cfg.INCIDENTS_LOG_FILE)
+        self._action_store = JsonlStore(self._cfg.SOC_AUTOMATION_LOG_FILE)
         self._cooldowns: Dict[Tuple[str, str], float] = {}
         self._counts: Dict[str, int] = {"executions": 0, "actions": 0, "suppressed": 0}
 
@@ -139,10 +139,4 @@ class SOCAutomationEngine:
         return actions
 
     def _write_action(self, payload: dict) -> None:
-        path = self._cfg.SOC_AUTOMATION_LOG_FILE
-        directory = os.path.dirname(path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload))
-            fh.write("\n")
+        self._action_store.append(payload)

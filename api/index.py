@@ -10,7 +10,9 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
+
+from network_security_monitor.incident_manager import IncidentManager
 
 
 app = Flask(__name__)
@@ -35,6 +37,12 @@ def _tail_lines(path: Path, max_lines: int = 400) -> list[str]:
 
 
 def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
+    structured_path = os.getenv("NSM_ALERTS_DATA_FILE", "").strip()
+    if structured_path:
+        alerts = _load_jsonl_records(Path(structured_path), limit=limit)
+        if alerts:
+            return alerts
+
     path = Path(os.getenv("NSM_ALERT_LOG_FILE", "alerts.log"))
     lines = _tail_lines(path)
     alerts = []
@@ -56,32 +64,27 @@ def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
     return list(reversed(alerts))
 
 
-def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
-    path = Path(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+def _load_jsonl_records(path: Path, limit: int = _MAX_RECENT) -> list[dict]:
     lines = _tail_lines(path)
-    actions = []
+    records = []
     for raw in reversed(lines):
         try:
-            actions.append(json.loads(raw))
+            records.append(json.loads(raw))
         except json.JSONDecodeError:
             continue
-        if len(actions) >= limit:
+        if len(records) >= limit:
             break
-    return list(reversed(actions))
+    return list(reversed(records))
+
+
+def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
+    path = Path(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+    return _load_jsonl_records(path, limit)
 
 
 def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
-    path = Path(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
-    lines = _tail_lines(path)
-    incidents = []
-    for raw in reversed(lines):
-        try:
-            incidents.append(json.loads(raw))
-        except json.JSONDecodeError:
-            continue
-        if len(incidents) >= limit:
-            break
-    return list(reversed(incidents))
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    return manager.list_cases(limit=limit)
 
 
 def _network_watcher_summary() -> dict:
@@ -286,8 +289,54 @@ def api_soc_summary():
 
 @app.get("/api/incidents")
 def api_incidents():
-    incidents = _load_incidents()
+    limit = _request_limit()
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    incidents = manager.list_cases(
+        limit=limit,
+        status=request.args.get("status", ""),
+        severity=request.args.get("severity", ""),
+        queue=request.args.get("queue", ""),
+        threat_type=request.args.get("threat_type", ""),
+        src_ip=request.args.get("src_ip", ""),
+    )
     return jsonify({"count": len(incidents), "incidents": incidents})
+
+
+@app.get("/api/incidents/<incident_id>")
+def api_incident_detail(incident_id: str):
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    incident = manager.get_case(incident_id)
+    if incident is None:
+        return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
+    return jsonify(incident)
+
+
+@app.patch("/api/incidents/<incident_id>")
+def api_incident_update(incident_id: str):
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    payload = request.get_json(silent=True) or {}
+    allowed = {
+        "status",
+        "queue",
+        "assignee",
+        "owner",
+        "notes",
+        "metadata",
+    }
+    changes = {key: value for key, value in payload.items() if key in allowed}
+    updated = manager.update_case(incident_id, **changes)
+    if updated is None:
+        return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
+    return jsonify(updated)
+
+
+def _request_limit(default: int = _MAX_RECENT) -> int:
+    raw = request.args.get("limit", str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, 500))
 
 
 @app.get("/dashboard")

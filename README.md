@@ -1,166 +1,341 @@
 # Network Security Monitor
 
-Project vision: evolve this into `SentinelNet`, a full Network Security Monitoring System (NSMS) with SOC workflows, incident response, and OT-aware monitoring.
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-117%20passed-2ea44f)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
+![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
-A Network Security Monitor (NSM) that continuously observes, analyzes, and detects suspicious activity across a network. It identifies cyber threats such as unauthorized access attempts, malware/C2 behavior, phishing indicators, potential data leaks, and unusual traffic patterns.
+Network Security Monitor is a Python-based Network Security Monitoring (NSM) project that captures or simulates traffic, detects suspicious behavior, and surfaces alerts through CLI, log, and lightweight web interfaces.
 
----
-
-## Features
-
-| Threat Type | Detection Method |
-|---|---|
-| **Port Scan** | Single source IP contacting ≥ N distinct ports within a time window |
-| **SYN Flood** | High rate of TCP SYN packets from one source |
-| **Brute Force** | Repeated connection attempts to authentication ports (SSH, RDP, FTP, …) |
-| **DDoS** | Very high packet rate from a single source IP |
-| **DNS Tunneling** | Oversized DNS query payloads (data exfiltration) |
-| **Suspicious Port** | Connections to known back-door / C2 ports (4444, 1337, 31337, …) |
-| **Malicious IP** | Traffic to/from threat-intelligence-listed IPs |
-| **Phishing Attempt** | IOC/keyword match in DNS/HTTP/HTTPS payload content |
-| **Data Exfiltration** | High outbound byte volume from one source in a short window |
-| **Unusual Traffic** | Source packet-rate spike versus rolling baseline |
-
-SOC automation:
-- Playbook-based response actions for alerts (case creation, enrichment, containment recommendations)
-- Action cooldown per threat/source to avoid noisy duplicate automation
-- JSONL audit trail (`soc_actions.log`) for SOAR/SIEM ingestion
-
-Product planning docs:
-- `docs/SENTINELNET_PRD.md`
-- `docs/SENTINELNET_ROADMAP.md`
+Project vision: evolve this into `SentinelNet`, a fuller NSMS platform with SOC workflows, incident response, and OT-aware monitoring.
 
 ---
 
-## Project Structure
+## What It Does
 
-```
-network_security_monitor/
-├── __init__.py          – Public API re-exports
-├── config.py            – Configurable thresholds and settings
-├── models.py            – Data classes: Packet, Alert, TrafficStats
-├── packet_analyzer.py   – Scapy → Packet conversion
-├── threat_detector.py   – All detection logic (10 detectors)
-├── alert_manager.py     – Alert storage, logging, and callback integrations
-├── monitor.py           – Main coordinator; live capture or replay mode
-└── dashboard.py         – Real-time CLI dashboard
-└── soc_automation.py    – SOC playbook execution and action audit logging
-└── incident_manager.py  – Incident case persistence (`incidents.jsonl`)
-
-tests/
-├── test_models.py
-├── test_packet_analyzer.py
-├── test_threat_detector.py
-├── test_alert_manager.py
-└── test_monitor.py
-
-main.py                  – CLI entry point
-requirements.txt
-```
+- Monitors traffic in live capture mode or replay-style simulation mode
+- Detects common threat patterns such as port scans, SYN floods, brute force attempts, DDoS bursts, DNS tunneling, phishing indicators, suspicious ports, data exfiltration, and traffic anomalies
+- Stores and forwards alerts through log files, webhooks, Slack, email, and SIEM-style JSONL output
+- Supports SOC-style automation with case logging and action cooldowns
+- Exposes a minimal Flask/Vercel API for dashboards, alert summaries, and incident views
 
 ---
 
-## Installation
+## Current Focus
+
+The strongest near-term product direction for this repo is:
+
+- Primary user: SMB IT admin or small SOC team
+- Primary promise: detect suspicious network activity quickly and make triage understandable
+- Primary success metric: a new user can install the project, run a simulation, and inspect meaningful alerts within a few minutes
+
+---
+
+## Preview
+
+![Application preview](docs/assets/overview-preview.svg)
+
+---
+
+## Quick Start
+
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
----
-
-## Usage
-
-### Simulation (no root required)
-
-Feed simulated attack traffic to demonstrate all detectors:
-
-```bash
-python main.py --simulate
-```
-
-With text-only output (no dashboard):
+Run the simulator without the dashboard:
 
 ```bash
 python main.py --simulate --no-dashboard
 ```
 
-Fast integration wiring (without editing files):
+Run the simulator with the real-time dashboard:
 
 ```bash
-python main.py --simulate --no-dashboard \
-  --slack-webhook-url https://hooks.slack.com/services/XXX/YYY/ZZZ \
-  --notify-min-severity HIGH
-python main.py --simulate --no-dashboard --siem-output-file siem/alerts.jsonl
+python main.py --simulate
 ```
 
-### Live Capture (requires root / CAP_NET_RAW)
-
-```bash
-sudo python main.py --live
-sudo python main.py --live --interface eth0
-python main.py --list-interfaces
-python main.py --live --interface eth0 --live-duration 1800
-python main.py --live --profile office
-```
-
-After simulation/live runs, NSM now prints:
-- integration readiness (`Slack/webhook/email/SIEM` configured or not)
-- tuning guidance based on observed alert volume
-
-### View Past Alerts
+View previously generated alerts:
 
 ```bash
 python main.py --show-alerts alerts.log
 ```
 
-### Vercel Deployment (API only)
+---
 
-This repository now includes a minimal serverless entrypoint at `api/index.py`
-for Vercel Python runtime compatibility.
+## First Five Minutes
 
-- `GET /` returns service metadata
-- `GET /health` returns a health check response
-- `GET /dashboard` shows a web alert dashboard (parsed from `alerts.log`)
-- `GET /network-watcher` shows watcher summary
-- `GET /soc-management` shows SOC management KPI and queue dashboard
-- `GET /api/alerts` returns recent alert records as JSON
-- `GET /api/network-watcher` returns watcher summary as JSON
-- `GET /api/soc-summary` returns SOC KPI/queue summary as JSON
-- `GET /api/incidents` returns incident case records as JSON
+If you want the fastest path to seeing value from the project:
 
-Note: live packet capture (`--live`) requires raw network access and a
-long-running process, so it must run on a VM/container host rather than Vercel.
+1. Install dependencies with `pip install -r requirements.txt`
+2. Run `python main.py --simulate --no-dashboard`
+3. Inspect `alerts.log`, `soc_actions.log`, and `incidents.jsonl`
+4. Run `python main.py --simulate` to see the real-time dashboard output
+5. Review profiles in `config_profiles.json` and rerun with `--profile office_tuned`
+
+For current product execution priorities, see `docs/WEEK1_EXECUTION_PLAN.md`.
+
+---
+
+## Runtime Modes
+
+### Simulation
+
+Best for demos, testing, and local development. No raw socket privileges required.
+
+```bash
+python main.py --simulate
+python main.py --simulate --no-dashboard
+python main.py --simulate --profile office_tuned --save-tuning tuning.json
+```
+
+### Live Capture
+
+Best for real monitoring on a host with packet capture privileges.
+
+```bash
+python main.py --list-interfaces
+sudo python main.py --live
+sudo python main.py --live --interface eth0
+python main.py --live --interface eth0 --live-duration 1800
+```
+
+### API / Dashboard
+
+The repository includes a Flask-based entrypoint for lightweight API and dashboard views, including Vercel-compatible serverless deployment for read-only monitoring surfaces.
+
+Available routes:
+
+- `GET /`
+- `GET /health`
+- `GET /dashboard`
+- `GET /network-watcher`
+- `GET /soc-management`
+- `GET /api/alerts`
+- `GET /api/network-watcher`
+- `GET /api/soc-summary`
+- `GET /api/incidents`
+- `GET /api/incidents/<incident_id>`
+- `PATCH /api/incidents/<incident_id>`
+
+Note: live packet capture is not available in Vercel's serverless runtime. Use a VM, container, or host with raw network access for `--live`.
+
+When `NSM_ALERTS_DATA_FILE` is configured, the API prefers structured alert JSONL records over parsing `alerts.log`.
+
+---
+
+## Sample API Responses
+
+Example payload from `GET /api/alerts`:
+
+```json
+{
+  "count": 2,
+  "alerts": [
+    {
+      "timestamp": "2026-04-03 00:07:53",
+      "severity": "HIGH",
+      "threat_type": "PORT_SCAN",
+      "src_ip": "10.0.0.1",
+      "raw": "2026-04-03 00:07:53,016 ERROR [2026-04-03 00:07:53] [HIGH] [PORT_SCAN] src=10.0.0.1 Test alert"
+    },
+    {
+      "timestamp": "2026-04-03 00:07:54",
+      "severity": "CRITICAL",
+      "threat_type": "SYN_FLOOD",
+      "src_ip": "10.0.99.1",
+      "raw": "2026-04-03 00:07:54,123 ERROR [2026-04-03 00:07:54] [CRITICAL] [SYN_FLOOD] src=10.0.99.1 SYN flood detected"
+    }
+  ]
+}
+```
+
+Example payload from `GET /api/incidents`:
+
+```json
+{
+  "count": 2,
+  "incidents": [
+    {
+      "incident_id": "INC-95CB7B941FA4",
+      "created_at": 1775344876.2230377,
+      "status": "open",
+      "queue": "soc-triage",
+      "severity": "HIGH",
+      "threat_type": "PORT_SCAN",
+      "src_ip": "1.1.1.1",
+      "dst_ip": "2.2.2.2",
+      "dst_port": null,
+      "description": "Port scan detected: 10 distinct ports contacted within 30s",
+      "metadata": {
+        "distinct_ports": 10,
+        "sample_ports": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      }
+    },
+    {
+      "incident_id": "INC-6B877347D08D",
+      "created_at": 1775344876.3023574,
+      "status": "open",
+      "queue": "network-incident",
+      "severity": "CRITICAL",
+      "threat_type": "SYN_FLOOD",
+      "src_ip": "1.1.1.1",
+      "dst_ip": "2.2.2.2",
+      "dst_port": 80,
+      "description": "SYN flood: 10 SYN packets in 5.0s",
+      "metadata": {
+        "syn_count": 10
+      }
+    }
+  ]
+}
+```
+
+Example filtering request:
+
+```text
+GET /api/incidents?status=open&queue=soc-triage&limit=10
+```
+
+Example update request to `PATCH /api/incidents/<incident_id>`:
+
+```json
+{
+  "status": "assigned",
+  "assignee": "alice",
+  "metadata": {
+    "ticket_id": "SOC-9"
+  }
+}
+```
+
+These examples are representative of the current API shapes in `api/index.py` and help show what downstream integrations can expect.
+
+---
+
+## Detection Coverage
+
+| Threat Type | Detection Method |
+|---|---|
+| **Port Scan** | Single source IP contacting many distinct ports within a time window |
+| **SYN Flood** | High rate of TCP SYN packets from one source |
+| **Brute Force** | Repeated connection attempts to authentication ports such as SSH, RDP, and FTP |
+| **DDoS** | Very high packet rate from a single source IP |
+| **DNS Tunneling** | Oversized or repeated suspicious DNS query payloads |
+| **Suspicious Port** | Connections to known backdoor or C2-associated ports |
+| **Malicious IP** | Traffic to or from threat-intelligence-listed IPs |
+| **Phishing Attempt** | IOC or domain match in DNS/HTTP/HTTPS content |
+| **Data Exfiltration** | High outbound byte volume in a short window |
+| **Unusual Traffic** | Packet-rate spike versus a rolling baseline |
+
+SOC automation features:
+
+- Playbook-based response actions for alerts
+- JSONL audit trail in `soc_actions.log`
+- Incident case persistence in `incidents.jsonl`
+- Cooldown handling to reduce duplicate automation noise
+
+---
+
+## Architecture
+
+At a high level, the project follows a simple monitoring pipeline:
+
+1. `packet_analyzer.py` normalizes raw packets into internal `Packet` models
+2. `monitor.py` coordinates packet flow, runtime state, and alert handling
+3. `threat_detector.py` applies detection logic across the supported threat types
+4. `alert_manager.py` stores alerts and forwards them to logs and integrations
+5. `soc_automation.py` and `incident_manager.py` add response tracking and case persistence
+6. `dashboard.py` and `api/index.py` expose human-friendly views of the results
+
+This keeps packet parsing, detection, alerting, response, and presentation separated enough to test each layer independently.
+
+---
+
+## Project Structure
+
+```text
+network_security_monitor/
+├── __init__.py
+├── alert_manager.py
+├── config.py
+├── dashboard.py
+├── incident_manager.py
+├── models.py
+├── monitor.py
+├── packet_analyzer.py
+├── soc_automation.py
+└── threat_detector.py
+
+api/
+└── index.py
+
+deploy/
+├── systemd/
+│   ├── install.sh
+│   └── nsm.service
+└── windows/
+    ├── install_task.ps1
+    └── run_nsm.ps1
+
+docs/
+├── SENTINELNET_PRD.md
+├── SENTINELNET_ROADMAP.md
+└── WEEK1_EXECUTION_PLAN.md
+
+tests/
+├── test_alert_manager.py
+├── test_api.py
+├── test_config.py
+├── test_dashboard.py
+├── test_incident_manager.py
+├── test_models.py
+├── test_monitor.py
+├── test_packet_analyzer.py
+├── test_soc_automation.py
+└── test_threat_detector.py
+
+main.py
+requirements.txt
+RUNBOOK.md
+config_profiles.json
+```
 
 ---
 
 ## Configuration
 
-Edit `network_security_monitor/config.py` to adjust detection thresholds.  
-Key settings:
+Primary settings live in `network_security_monitor/config.py`.
+
+Common tunables include:
 
 ```python
-Config.PORT_SCAN_THRESHOLD      = 25   # distinct ports in PORT_SCAN_TIME_WINDOW seconds
-Config.PORT_SCAN_TRUSTED_SOURCES = {"192.168.1.1"}  # optional allowlist for known internal scanners
-Config.SYN_FLOOD_THRESHOLD      = 200  # SYN packets per second
-Config.BRUTE_FORCE_THRESHOLD    = 12   # attempts per BRUTE_FORCE_TIME_WINDOW seconds
-Config.DDOS_THRESHOLD           = 1500 # packets per second
-Config.DNS_QUERY_SIZE_THRESHOLD = 700  # bytes; larger queries are suspicious
-Config.SUSPICIOUS_PORTS         = {4444, 1337, 31337, ...}
-Config.KNOWN_MALICIOUS_IPS      = {"x.x.x.x", ...}  # load from threat intel feeds
-Config.PHISHING_DOMAINS         = {"example-phish-domain.com", ...}
-Config.DATA_EXFIL_THRESHOLD_BYTES = 52428800  # bytes per DATA_EXFIL_TIME_WINDOW
-Config.TRAFFIC_ANOMALY_MULTIPLIER = 3.5       # spike factor over baseline
-Config.SIEM_OUTPUT_FILE         = "siem/alerts.jsonl"
-Config.ALERT_WEBHOOK_URL        = "https://example.local/hook"
+Config.PORT_SCAN_THRESHOLD = 25
+Config.SYN_FLOOD_THRESHOLD = 200
+Config.BRUTE_FORCE_THRESHOLD = 12
+Config.DDOS_THRESHOLD = 1500
+Config.DNS_QUERY_SIZE_THRESHOLD = 700
+Config.DATA_EXFIL_THRESHOLD_BYTES = 50 * 1024 * 1024
+Config.TRAFFIC_ANOMALY_MULTIPLIER = 3.5
+Config.SIEM_OUTPUT_FILE = "siem/alerts.jsonl"
+Config.ALERT_WEBHOOK_URL = "https://example.local/hook"
 ```
 
-Optional integration env vars:
+Environment variable overrides:
+
 - `NSM_ALERT_WEBHOOK_URL`
 - `NSM_SLACK_WEBHOOK_URL`
-- `NSM_SMTP_HOST`, `NSM_SMTP_PORT`, `NSM_SMTP_USERNAME`, `NSM_SMTP_PASSWORD`
-- `NSM_ALERT_EMAIL_FROM`, `NSM_ALERT_EMAIL_TO`
+- `NSM_SMTP_HOST`
+- `NSM_SMTP_PORT`
+- `NSM_SMTP_USERNAME`
+- `NSM_SMTP_PASSWORD`
+- `NSM_ALERT_EMAIL_FROM`
+- `NSM_ALERT_EMAIL_TO`
 - `NSM_SIEM_OUTPUT_FILE`
-- `NSM_PORT_SCAN_TRUSTED_SOURCES` (comma-separated, e.g. `192.168.1.1,10.0.0.10`)
+- `NSM_ALERTS_DATA_FILE`
+- `NSM_PORT_SCAN_TRUSTED_SOURCES`
 - `NSM_SOC_AUTOMATION_ENABLED`
 - `NSM_SOC_AUTOMATION_MIN_SEVERITY`
 - `NSM_SOC_AUTOMATION_COOLDOWN_SECONDS`
@@ -168,16 +343,23 @@ Optional integration env vars:
 - `NSM_INCIDENTS_LOG_FILE`
 - `NSM_SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL`
 
-Baseline profiles:
+Local `.env` values are auto-loaded by `Config` when present.
+
+---
+
+## Profiles And Tuning
+
+Bundled baseline profiles:
+
 - `dev`
 - `office`
-- `office_tuned` (reduced anomaly noise from latest simulation baseline)
+- `office_tuned`
 - `datacenter`
 - `home_lab`
 - `corp_wifi`
 - `server_vlan`
 
-You can load a profile at runtime:
+Examples:
 
 ```bash
 python main.py --simulate --profile office
@@ -186,67 +368,103 @@ python main.py --live --profile datacenter --profile-file config_profiles.json
 python main.py --live --profile office --live-duration 1800 --save-tuning tuning.json
 ```
 
-Slack validation:
+After simulation or live runs, the tool prints:
+
+- Integration readiness for Slack, webhook, email, and SIEM outputs
+- Tuning guidance based on observed alert volume
+
+---
+
+## Integrations
+
+Fast integration examples:
+
+```bash
+python main.py --simulate --no-dashboard \
+  --slack-webhook-url https://hooks.slack.com/services/XXX/YYY/ZZZ \
+  --notify-min-severity HIGH
+
+python main.py --simulate --no-dashboard \
+  --siem-output-file siem/alerts.jsonl
+```
+
+Slack validation example:
 
 ```bash
 set NSM_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ
 python main.py --simulate --no-dashboard
 ```
 
-Release-readiness quick check:
+Deployment and operations assets:
 
-```bash
-python main.py --simulate --profile office_tuned --no-dashboard --save-tuning tuning-live.json
-pytest tests/ -v
-```
-
-Deployment hardening assets:
+- `.env.example`
+- `RUNBOOK.md`
 - `deploy/systemd/nsm.service`
+- `deploy/systemd/install.sh`
 - `deploy/windows/install_task.ps1`
 - `deploy/windows/run_nsm.ps1`
-- `.env.example` for secret/env setup
-- `RUNBOOK.md` for incident response workflow
-
-Tip: `Config` auto-loads local `.env` values (if present) before env var reads.
 
 ---
 
-## Running Tests
+## Testing
+
+Run the test suite with:
 
 ```bash
 pytest tests/ -v
 ```
 
-All 110 tests run without root access or a live network interface
-(with API route tests skipped automatically when Flask is unavailable locally).
+On Windows with the project virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\ -v
+```
+
+Current verified result in this repository:
+
+- `117 passed`
 
 ---
 
-## Sample Output
+## Roadmap
 
-```
-────────────────────────────────────────────────────────────────────────────────
-                        🛡  NETWORK SECURITY MONITOR  🛡
-                             2026-04-02  20:45:32
-────────────────────────────────────────────────────────────────────────────────
+Near-term project direction for `SentinelNet`:
 
-  TRAFFIC STATISTICS
-  Total packets   : 1,252
-  Total bytes     : 158.4 KB
-  Packets/sec     : 32,608.1
-  TCP / UDP / ICMP: 170 / 1,050 / 0
-  DNS / Other     : 32 / 0
+- Complete persistent storage beyond log-backed files for alerts and incidents
+- Expand SOC operations with assignment, lifecycle states, and KPI/SLA tracking
+- Add asset and network context such as inventory, topology, and per-segment baselines
+- Integrate threat intelligence enrichment sources and IOC management
+- Introduce OT-focused visibility starting with protocol-aware detections
+- Explore multi-tenant controls for MSP-style operation
 
-  ALERT SUMMARY
-  Total alerts    : 6
-  Critical / High : 2 / 2
-  Medium / Low    : 2 / 0
+For the full phased plan, see `docs/SENTINELNET_ROADMAP.md`.
 
-  RECENT ALERTS
-  [HIGH]     [PORT_SCAN]      src=10.0.0.99   Port scan: 20 ports in 10s
-  [CRITICAL] [SYN_FLOOD]      src=10.0.99.1   100 SYN packets/s to port 80
-  [HIGH]     [BRUTE_FORCE]    src=10.0.99.2   10 attempts on SSH (port 22)
-  [MEDIUM]   [DNS_TUNNELING]  src=10.0.99.3   10 oversized DNS queries
-  [MEDIUM]   [SUSPICIOUS_PORT] src=10.0.99.4  Connection to port 4444
-  [CRITICAL] [DDOS]           src=10.0.99.5   1000 packets/s
-```
+---
+
+## Contributing
+
+Contributions are welcome, especially in these areas:
+
+- Detection quality improvements and false-positive tuning
+- Additional integrations, dashboards, and deployment hardening
+- Test coverage for new detectors, API routes, and SOC workflows
+- Documentation, runbooks, and sample datasets for demos
+
+Suggested local workflow:
+
+1. Create or activate the project virtual environment
+2. Install dependencies from `requirements.txt`
+3. Run `.\.venv\Scripts\python.exe -m pytest tests\ -v` on Windows, or `pytest tests/ -v` elsewhere
+4. Validate your change in simulation mode with `python main.py --simulate --no-dashboard`
+
+Keep changes focused, preserve existing behavior unless the change is intentional, and add tests when detector or workflow logic changes.
+
+---
+
+## Product Docs
+
+- `docs/SENTINELNET_PRD.md`
+- `docs/SENTINELNET_ROADMAP.md`
+- `docs/WEEK1_EXECUTION_PLAN.md`
+- `RUNBOOK.md`
+- `DRILL_NOTES.md`

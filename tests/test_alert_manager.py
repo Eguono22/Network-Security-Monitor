@@ -148,3 +148,21 @@ class TestAlertManager:
             assert not path.exists()
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_structured_alert_store_writes_jsonl(self):
+        tmp_root = Path(".test_tmp") / f"alerts-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        cfg = Config()
+        cfg.ALERTS_DATA_FILE = str(tmp_root / "alerts.jsonl")
+        am = AlertManager(cfg)
+        am.add(_make_alert(severity=AlertSeverity.CRITICAL, threat_type=ThreatType.DDOS))
+
+        try:
+            lines = (tmp_root / "alerts.jsonl").read_text(encoding="utf-8").splitlines()
+            assert len(lines) == 1
+            payload = json.loads(lines[0])
+            assert payload["severity"] == "CRITICAL"
+            assert payload["threat_type"] == "DDOS"
+            assert payload["raw"]
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

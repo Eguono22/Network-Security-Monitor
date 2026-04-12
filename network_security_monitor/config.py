@@ -133,6 +133,8 @@ class Config:
     ALERT_EMAIL_TO: str = ""
     # Optional SIEM-style JSONL file output for alert forwarding.
     SIEM_OUTPUT_FILE: str = ""
+    # Optional structured JSONL alert persistence for API/UI consumers.
+    ALERTS_DATA_FILE: str = ""
     # ---------------------------------------------------------------------------
     # SOC automation
     # ---------------------------------------------------------------------------
@@ -166,6 +168,7 @@ class Config:
         self.ALERT_EMAIL_FROM = os.getenv("NSM_ALERT_EMAIL_FROM", self.ALERT_EMAIL_FROM)
         self.ALERT_EMAIL_TO = os.getenv("NSM_ALERT_EMAIL_TO", self.ALERT_EMAIL_TO)
         self.SIEM_OUTPUT_FILE = os.getenv("NSM_SIEM_OUTPUT_FILE", self.SIEM_OUTPUT_FILE)
+        self.ALERTS_DATA_FILE = os.getenv("NSM_ALERTS_DATA_FILE", self.ALERTS_DATA_FILE)
         self.ALERT_LOG_MAX_BYTES = int(
             os.getenv("NSM_ALERT_LOG_MAX_BYTES", str(self.ALERT_LOG_MAX_BYTES))
         )

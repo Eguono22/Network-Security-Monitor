@@ -15,6 +15,7 @@ from urllib import request
 
 from .config import Config
 from .models import Alert, AlertSeverity, ThreatType
+from .storage import AlertStore
 
 
 # Map our AlertSeverity levels to Python logging levels.
@@ -54,6 +55,7 @@ class AlertManager:
         self._cfg = config or Config()
         self._history: Deque[Alert] = deque(maxlen=self._cfg.MAX_ALERT_HISTORY)
         self._callbacks: List[Callable[[Alert], None]] = []
+        self._alert_store = AlertStore(self._cfg.ALERTS_DATA_FILE) if self._cfg.ALERTS_DATA_FILE else None
         self._logger = self._build_logger()
         self._register_builtin_integrations()
 
@@ -64,6 +66,11 @@ class AlertManager:
     def add(self, alert: Alert) -> None:
         """Record *alert*, write it to the log file, and notify callbacks."""
         self._history.append(alert)
+        if self._alert_store is not None:
+            try:
+                self._alert_store.append_alert(alert)
+            except OSError:
+                pass
         level = _SEVERITY_TO_LOG_LEVEL.get(alert.severity, logging.WARNING)
         self._logger.log(level, str(alert))
         for cb in self._callbacks:
