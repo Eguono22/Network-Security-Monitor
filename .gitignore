@@ -10,6 +10,7 @@ build/
 .pytest_cache/
 .mypy_cache/
 .uv-cache/
+.tmp/
 pytest-cache-files-*/
 .test_tmp/
 .env
