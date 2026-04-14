@@ -3,83 +3,32 @@
 from __future__ import annotations
 
 import html
-import json
 import os
-import re
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
 
 from flask import Flask, Response, jsonify, request
 
 from network_security_monitor.incident_manager import IncidentManager
+from network_security_monitor.storage import AlertRepository, JsonlStore
 
 
 app = Flask(__name__)
 
-_ALERT_LINE_RE = re.compile(
-    r"\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+"
-    r"\[(?P<severity>[A-Z]+)\]\s+"
-    r"\[(?P<threat>[A-Z_]+)\]\s+"
-    r"src=(?P<src>\S+)"
-)
 _MAX_RECENT = 100
 
 
-def _tail_lines(path: Path, max_lines: int = 400) -> list[str]:
-    if not path.exists():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return []
-    return lines[-max_lines:]
-
-
 def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
-    structured_path = os.getenv("NSM_ALERTS_DATA_FILE", "").strip()
-    if structured_path:
-        alerts = _load_jsonl_records(Path(structured_path), limit=limit)
-        if alerts:
-            return alerts
-
-    path = Path(os.getenv("NSM_ALERT_LOG_FILE", "alerts.log"))
-    lines = _tail_lines(path)
-    alerts = []
-    for raw in reversed(lines):
-        m = _ALERT_LINE_RE.search(raw)
-        if not m:
-            continue
-        alerts.append(
-            {
-                "timestamp": m.group("ts"),
-                "severity": m.group("severity"),
-                "threat_type": m.group("threat"),
-                "src_ip": m.group("src"),
-                "raw": raw,
-            }
-        )
-        if len(alerts) >= limit:
-            break
-    return list(reversed(alerts))
-
-
-def _load_jsonl_records(path: Path, limit: int = _MAX_RECENT) -> list[dict]:
-    lines = _tail_lines(path)
-    records = []
-    for raw in reversed(lines):
-        try:
-            records.append(json.loads(raw))
-        except json.JSONDecodeError:
-            continue
-        if len(records) >= limit:
-            break
-    return list(reversed(records))
+    repository = AlertRepository(
+        structured_path=os.getenv("NSM_ALERTS_DATA_FILE", "").strip(),
+        log_path=os.getenv("NSM_ALERT_LOG_FILE", "alerts.log"),
+    )
+    return repository.read_recent(limit)
 
 
 def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
-    path = Path(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
-    return _load_jsonl_records(path, limit)
+    store = JsonlStore(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+    return store.read_recent(limit)
 
 
 def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
