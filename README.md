@@ -71,7 +71,7 @@ If you want the fastest path to seeing value from the project:
 
 1. Install dependencies with `pip install -r requirements.txt`
 2. Run `python main.py --simulate --no-dashboard`
-3. Inspect `alerts.log`, `soc_actions.log`, and `incidents.jsonl`
+3. Inspect `alerts.log`, `soc_actions.log`, and `incidents.db`
 4. Run `python main.py --simulate` to see the real-time dashboard output
 5. Review profiles in `config_profiles.json` and rerun with `--profile office_tuned`
 
@@ -234,7 +234,7 @@ SOC automation features:
 
 - Playbook-based response actions for alerts
 - JSONL audit trail in `soc_actions.log`
-- Incident case persistence in `incidents.jsonl`
+- Incident case persistence in `incidents.db`
 - Cooldown handling to reduce duplicate automation noise
 
 ---

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -145,7 +146,13 @@ class AlertRepository:
 
 
 class IncidentStore(JsonlStore):
-    """Structured append-only incident storage with materialized case reads."""
+    """SQLite-backed incident storage with legacy JSONL migration."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._legacy_path = self._resolve_legacy_path(path)
+        self._db_path = self._resolve_db_path(path)
+        self._ensure_database()
 
     def create_case(self, alert: Alert, queue: str = "soc-triage") -> dict[str, Any]:
         now = time.time()
@@ -154,6 +161,7 @@ class IncidentStore(JsonlStore):
             "incident_id": incident_id,
             "created_at": now,
             "updated_at": now,
+            "status_changed_at": now,
             "status": "open",
             "queue": queue,
             "severity": alert.severity.value,
@@ -164,11 +172,18 @@ class IncidentStore(JsonlStore):
             "description": alert.description,
             "metadata": alert.metadata,
         }
-        self.append(case)
+        self._upsert_case(case)
         return case
 
     def get_case(self, incident_id: str) -> dict[str, Any] | None:
-        return self._materialize_cases().get(incident_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM incidents WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["payload_json"])
 
     def update_case(self, incident_id: str, **changes: Any) -> dict[str, Any] | None:
         current = self.get_case(incident_id)
@@ -183,7 +198,7 @@ class IncidentStore(JsonlStore):
         updated.update({key: value for key, value in changes.items() if value is not None})
         updated["incident_id"] = incident_id
         updated["updated_at"] = time.time()
-        self.append(updated)
+        self._upsert_case(updated)
         return updated
 
     def list_cases(
@@ -195,32 +210,219 @@ class IncidentStore(JsonlStore):
         queue: str = "",
         threat_type: str = "",
         src_ip: str = "",
+        assignee: str = "",
+        owner: str = "",
     ) -> list[dict[str, Any]]:
-        cases = list(self._materialize_cases().values())
+        clauses = []
+        params: list[Any] = []
+
         if status:
-            cases = [c for c in cases if str(c.get("status", "")).lower() == status.lower()]
+            statuses = [raw.strip().lower() for raw in str(status).split(",") if raw.strip()]
+            if statuses:
+                placeholders = ", ".join("?" for _ in statuses)
+                clauses.append(f"status IN ({placeholders})")
+                params.extend(statuses)
         if severity:
-            cases = [c for c in cases if str(c.get("severity", "")).upper() == severity.upper()]
+            clauses.append("severity = ?")
+            params.append(str(severity).upper())
         if queue:
-            cases = [c for c in cases if str(c.get("queue", "")).lower() == queue.lower()]
+            clauses.append("LOWER(queue) = ?")
+            params.append(str(queue).lower())
         if threat_type:
-            cases = [c for c in cases if str(c.get("threat_type", "")).upper() == threat_type.upper()]
+            clauses.append("threat_type = ?")
+            params.append(str(threat_type).upper())
         if src_ip:
-            cases = [c for c in cases if str(c.get("src_ip", "")) == src_ip]
+            clauses.append("src_ip = ?")
+            params.append(str(src_ip))
+        if assignee:
+            clauses.append("LOWER(COALESCE(assignee, '')) = ?")
+            params.append(str(assignee).lower())
+        if owner:
+            clauses.append("LOWER(COALESCE(owner, '')) = ?")
+            params.append(str(owner).lower())
 
-        cases.sort(key=lambda c: c.get("updated_at", c.get("created_at", 0.0)))
-        return cases[-limit:]
+        query = "SELECT payload_json FROM incidents"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, int(limit)))
 
-    def _materialize_cases(self) -> dict[str, dict[str, Any]]:
-        latest: dict[str, dict[str, Any]] = {}
-        for record in self.read_all():
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [json.loads(row["payload_json"]) for row in reversed(rows)]
+
+    def _connect(self) -> sqlite3.Connection:
+        if self._db_path != ":memory:":
+            directory = os.path.dirname(self._db_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_database(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incidents (
+                    incident_id TEXT PRIMARY KEY,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    status_changed_at REAL,
+                    assigned_at REAL,
+                    contained_at REAL,
+                    resolved_at REAL,
+                    status TEXT NOT NULL,
+                    queue TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    threat_type TEXT NOT NULL,
+                    src_ip TEXT NOT NULL,
+                    dst_ip TEXT,
+                    dst_port INTEGER,
+                    description TEXT NOT NULL,
+                    assignee TEXT,
+                    owner TEXT,
+                    notes TEXT,
+                    metadata_json TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_incidents_updated_at ON incidents(updated_at)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_queue ON incidents(queue)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_incidents_threat_type ON incidents(threat_type)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_src_ip ON incidents(src_ip)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_assignee ON incidents(assignee)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_owner ON incidents(owner)")
+            row = conn.execute("SELECT COUNT(*) AS count FROM incidents").fetchone()
+            if row and int(row["count"]) == 0:
+                self._migrate_legacy_jsonl(conn)
+            conn.commit()
+
+    def _migrate_legacy_jsonl(self, conn: sqlite3.Connection) -> None:
+        if not self._legacy_path or not os.path.exists(self._legacy_path):
+            return
+        legacy_cases: dict[str, dict[str, Any]] = {}
+        for record in JsonlStore(self._legacy_path).read_all():
             incident_id = record.get("incident_id")
             if not incident_id:
                 continue
-            merged = dict(latest.get(incident_id, {}))
+            merged = dict(legacy_cases.get(incident_id, {}))
             merged.update(record)
-            latest[incident_id] = merged
-        return latest
+            legacy_cases[incident_id] = merged
+        for case in legacy_cases.values():
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO incidents (
+                    incident_id,
+                    created_at,
+                    updated_at,
+                    status_changed_at,
+                    assigned_at,
+                    contained_at,
+                    resolved_at,
+                    status,
+                    queue,
+                    severity,
+                    threat_type,
+                    src_ip,
+                    dst_ip,
+                    dst_port,
+                    description,
+                    assignee,
+                    owner,
+                    notes,
+                    metadata_json,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._record_values(case),
+            )
+
+    def _upsert_case(self, case: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO incidents (
+                    incident_id,
+                    created_at,
+                    updated_at,
+                    status_changed_at,
+                    assigned_at,
+                    contained_at,
+                    resolved_at,
+                    status,
+                    queue,
+                    severity,
+                    threat_type,
+                    src_ip,
+                    dst_ip,
+                    dst_port,
+                    description,
+                    assignee,
+                    owner,
+                    notes,
+                    metadata_json,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._record_values(case),
+            )
+            conn.commit()
+
+    @staticmethod
+    def _record_values(case: dict[str, Any]) -> tuple[Any, ...]:
+        payload = dict(case)
+        payload["metadata"] = dict(payload.get("metadata") or {})
+        return (
+            payload["incident_id"],
+            payload.get("created_at", 0.0),
+            payload.get("updated_at", payload.get("created_at", 0.0)),
+            payload.get("status_changed_at"),
+            payload.get("assigned_at"),
+            payload.get("contained_at"),
+            payload.get("resolved_at"),
+            payload.get("status", "open"),
+            payload.get("queue", "soc-triage"),
+            payload.get("severity", "UNKNOWN"),
+            payload.get("threat_type", "UNKNOWN"),
+            payload.get("src_ip", ""),
+            payload.get("dst_ip"),
+            payload.get("dst_port"),
+            payload.get("description", ""),
+            payload.get("assignee"),
+            payload.get("owner"),
+            payload.get("notes"),
+            json.dumps(payload.get("metadata") or {}),
+            json.dumps(payload),
+        )
+
+    @staticmethod
+    def _resolve_db_path(path: str) -> str:
+        if not path:
+            return "incidents.db"
+        if path == ":memory:":
+            return path
+        root, ext = os.path.splitext(path)
+        if ext.lower() == ".jsonl":
+            return f"{root}.db"
+        return path
+
+    @staticmethod
+    def _resolve_legacy_path(path: str) -> str:
+        if not path or path == ":memory:":
+            return ""
+        root, ext = os.path.splitext(path)
+        if ext.lower() == ".jsonl":
+            return path
+        candidate = f"{root}.jsonl"
+        return candidate if os.path.exists(candidate) else ""
 
     @staticmethod
     def _build_id(alert: Alert, now: float) -> str:

@@ -19,3 +19,4 @@ alerts.log
 siem/
 tuning*.json
 incidents*.jsonl
+incidents*.db

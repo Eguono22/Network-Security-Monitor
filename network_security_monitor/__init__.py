@@ -14,7 +14,12 @@ from .threat_detector import ThreatDetector
 from .alert_manager import AlertManager
 from .monitor import NetworkMonitor
 from .soc_automation import SOCAutomationEngine
-from .incident_manager import IncidentManager
+from .incident_manager import (
+    ACTIVE_INCIDENT_STATUSES,
+    VALID_INCIDENT_STATUSES,
+    IncidentManager,
+    IncidentValidationError,
+)
 from .storage import AlertLogStore, AlertRepository, AlertStore, IncidentStore, JsonlStore
 
 __all__ = [
@@ -29,6 +34,9 @@ __all__ = [
     "NetworkMonitor",
     "SOCAutomationEngine",
     "IncidentManager",
+    "IncidentValidationError",
+    "VALID_INCIDENT_STATUSES",
+    "ACTIVE_INCIDENT_STATUSES",
     "AlertLogStore",
     "AlertRepository",
     "AlertStore",

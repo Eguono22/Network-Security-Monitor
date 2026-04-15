@@ -142,7 +142,9 @@ class Config:
     SOC_AUTOMATION_MIN_SEVERITY: str = "HIGH"
     SOC_AUTOMATION_COOLDOWN_SECONDS: int = 300
     SOC_AUTOMATION_LOG_FILE: str = "soc_actions.log"
-    INCIDENTS_LOG_FILE: str = "incidents.jsonl"
+    # SQLite-backed incident case persistence. Legacy ``incidents.jsonl`` files
+    # are imported automatically when the sibling database is first created.
+    INCIDENTS_LOG_FILE: str = "incidents.db"
     SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL: bool = False
 
     # ---------------------------------------------------------------------------

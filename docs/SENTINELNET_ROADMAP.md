@@ -42,7 +42,7 @@
 - [ ] White-label and API key management
 
 ## Immediate Next Sprint (Recommended)
-- [ ] Add incident case object + local persistence (`incidents.jsonl`)
+- [ ] Add incident case object + local persistence (`incidents.db`)
 - [ ] Add `/api/incidents` + `/soc-management/incidents` table
 - [ ] Add alert-to-case auto-link from SOC automation actions
 - [ ] Add basic threat-intel enrichment mock endpoint

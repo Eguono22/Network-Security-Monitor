@@ -140,6 +140,69 @@ class TestApiRoutes:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_api_incidents_supports_active_and_assignee_filters(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incidents-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "incident_id": "INC-ACT1",
+                            "created_at": 1,
+                            "updated_at": 3,
+                            "status": "assigned",
+                            "severity": "HIGH",
+                            "queue": "soc-triage",
+                            "threat_type": "PORT_SCAN",
+                            "src_ip": "1.1.1.1",
+                            "assignee": "alice",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "incident_id": "INC-RES1",
+                            "created_at": 2,
+                            "updated_at": 4,
+                            "status": "resolved",
+                            "severity": "CRITICAL",
+                            "queue": "network-incident",
+                            "threat_type": "DDOS",
+                            "src_ip": "2.2.2.2",
+                            "assignee": "bob",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            active = client.get("/api/incidents?status=active")
+            assert active.status_code == 200
+            active_payload = active.get_json()
+            assert active_payload["count"] == 1
+            assert active_payload["incidents"][0]["incident_id"] == "INC-ACT1"
+
+            assignee = client.get("/api/incidents?assignee=alice")
+            assert assignee.status_code == 200
+            assignee_payload = assignee.get_json()
+            assert assignee_payload["count"] == 1
+            assert assignee_payload["incidents"][0]["incident_id"] == "INC-ACT1"
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
     def test_api_incident_update_returns_updated_case(self):
         pytest.importorskip("flask")
         from api.index import app
@@ -183,6 +246,45 @@ class TestApiRoutes:
             detail_payload = detail.get_json()
             assert detail_payload["status"] == "assigned"
             assert detail_payload["assignee"] == "alice"
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incident_update_rejects_invalid_status(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incident-update-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-UPD2",
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "1.1.1.1",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.patch("/api/incidents/INC-UPD2", json={"status": "closed"})
+            assert res.status_code == 400
+            payload = res.get_json()
+            assert payload["error"] == "invalid_incident_update"
         finally:
             if prior is None:
                 os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)

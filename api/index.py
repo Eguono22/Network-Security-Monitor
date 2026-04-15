@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, request
 
-from network_security_monitor.incident_manager import IncidentManager
+from network_security_monitor.incident_manager import (
+    ACTIVE_INCIDENT_STATUSES,
+    IncidentManager,
+    IncidentValidationError,
+)
 from network_security_monitor.storage import AlertRepository, JsonlStore
 
 
@@ -32,7 +36,7 @@ def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
 
 
 def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
     return manager.list_cases(limit=limit)
 
 
@@ -71,9 +75,13 @@ def _soc_management_snapshot() -> dict:
     actions = _load_soc_actions()
     incidents = _load_incidents()
     open_incidents = sum(1 for i in incidents if i.get("status") == "open")
+    active_incidents = sum(
+        1 for i in incidents if str(i.get("status", "open")).lower() in ACTIVE_INCIDENT_STATUSES
+    )
     critical_incidents = sum(1 for i in incidents if i.get("severity") == "CRITICAL")
     if not incidents:
         open_incidents = sum(1 for a in alerts if a["severity"] in {"HIGH", "CRITICAL"})
+        active_incidents = open_incidents
         critical_incidents = sum(1 for a in alerts if a["severity"] == "CRITICAL")
     threat_queue = Counter(a["threat_type"] for a in alerts).most_common(6)
     analyst_queue = Counter(
@@ -84,6 +92,7 @@ def _soc_management_snapshot() -> dict:
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "open_incidents": open_incidents,
+        "active_incidents": active_incidents,
         "critical_incidents": critical_incidents,
         "automation_actions": len(actions),
         "recent_alerts": len(alerts),
@@ -239,21 +248,26 @@ def api_soc_summary():
 @app.get("/api/incidents")
 def api_incidents():
     limit = _request_limit()
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
-    incidents = manager.list_cases(
-        limit=limit,
-        status=request.args.get("status", ""),
-        severity=request.args.get("severity", ""),
-        queue=request.args.get("queue", ""),
-        threat_type=request.args.get("threat_type", ""),
-        src_ip=request.args.get("src_ip", ""),
-    )
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    try:
+        incidents = manager.list_cases(
+            limit=limit,
+            status=request.args.get("status", ""),
+            severity=request.args.get("severity", ""),
+            queue=request.args.get("queue", ""),
+            threat_type=request.args.get("threat_type", ""),
+            src_ip=request.args.get("src_ip", ""),
+            assignee=request.args.get("assignee", ""),
+            owner=request.args.get("owner", ""),
+        )
+    except IncidentValidationError as exc:
+        return jsonify({"error": "invalid_incident_filter", "message": str(exc)}), 400
     return jsonify({"count": len(incidents), "incidents": incidents})
 
 
 @app.get("/api/incidents/<incident_id>")
 def api_incident_detail(incident_id: str):
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
     incident = manager.get_case(incident_id)
     if incident is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
@@ -262,7 +276,7 @@ def api_incident_detail(incident_id: str):
 
 @app.patch("/api/incidents/<incident_id>")
 def api_incident_update(incident_id: str):
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.jsonl"))
+    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
     payload = request.get_json(silent=True) or {}
     allowed = {
         "status",
@@ -273,7 +287,10 @@ def api_incident_update(incident_id: str):
         "metadata",
     }
     changes = {key: value for key, value in payload.items() if key in allowed}
-    updated = manager.update_case(incident_id, **changes)
+    try:
+        updated = manager.update_case(incident_id, **changes)
+    except IncidentValidationError as exc:
+        return jsonify({"error": "invalid_incident_update", "message": str(exc)}), 400
     if updated is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
     return jsonify(updated)
@@ -522,7 +539,7 @@ def soc_management():
     </section>
 
     <section class="kpis">
-      <article class="card"><div class="k">Open Incidents</div><div class="v warn">{snap['open_incidents']}</div></article>
+      <article class="card"><div class="k">Active Incidents</div><div class="v warn">{snap['active_incidents']}</div></article>
       <article class="card"><div class="k">Critical Incidents</div><div class="v bad">{snap['critical_incidents']}</div></article>
       <article class="card"><div class="k">Automation Actions</div><div class="v good">{snap['automation_actions']}</div></article>
       <article class="card"><div class="k">Recent Alerts</div><div class="v">{snap['recent_alerts']}</div></article>

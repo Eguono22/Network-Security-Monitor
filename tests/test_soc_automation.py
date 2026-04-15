@@ -47,7 +47,7 @@ class TestSOCAutomationEngine:
             create_case = [o for o in outputs if o["action"]["type"] == "create_case"]
             assert create_case
             assert create_case[0]["action"]["incident_id"].startswith("INC-")
-            assert (tmp_root / "soc" / "incidents.jsonl").exists()
+            assert (tmp_root / "soc" / "incidents.db").exists()
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
 
