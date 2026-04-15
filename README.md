@@ -1,11 +1,11 @@
-# Network Security Monitor
+# Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-117%20passed-2ea44f)
+![Tests](https://img.shields.io/badge/tests-136%20passed-2ea44f)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
-Network Security Monitor is a Python-based Network Security Monitoring (NSM) project that captures or simulates traffic, detects suspicious behavior, and surfaces alerts through CLI, log, and lightweight web interfaces.
+Network Security Monitoring System (NSMS) is a Python-based network security monitoring project that captures or simulates traffic, detects suspicious behavior, and surfaces alerts through CLI, log, and lightweight web interfaces.
 
 Project vision: evolve this into `SentinelNet`, a fuller NSMS platform with SOC workflows, incident response, and OT-aware monitoring.
 
@@ -218,7 +218,7 @@ Example threat-intel response:
   "confidence": 0.8,
   "reputation_score": 76,
   "summary": "Linked to 1 recent incident case(s).",
-  "tags": ["mock-intel", "threat:MALICIOUS_IP", "recent-alert-match", "incident-linked"],
+  "tags": ["mock-intel", "threat:malicious_ip", "recent-alert-match", "incident-linked"],
   "sources": [
     {
       "name": "sentinelnet-mock-intel",
@@ -268,6 +268,7 @@ These examples are representative of the current API shapes in `api/index.py` an
 | **Phishing Attempt** | IOC or domain match in DNS/HTTP/HTTPS content |
 | **Data Exfiltration** | High outbound byte volume in a short window |
 | **Unusual Traffic** | Packet-rate spike versus a rolling baseline |
+| **Modbus Command Spike** | Repeated Modbus/TCP function codes against an OT endpoint within a short window |
 
 SOC automation features:
 
@@ -275,6 +276,7 @@ SOC automation features:
 - JSONL audit trail in `soc_actions.log`
 - Incident case persistence in `incidents.db`
 - Alert-to-case linking in structured alert records via `incident_ids`
+- OT-aware case routing for Modbus command spike alerts
 - Cooldown handling to reduce duplicate automation noise
 
 ---
@@ -307,6 +309,7 @@ network_security_monitor/
 ├── monitor.py
 ├── packet_analyzer.py
 ├── soc_automation.py
+├── threat_intel.py
 └── threat_detector.py
 
 api/
@@ -335,6 +338,7 @@ tests/
 ├── test_monitor.py
 ├── test_packet_analyzer.py
 ├── test_soc_automation.py
+├── test_threat_intel.py
 └── test_threat_detector.py
 
 main.py
@@ -462,7 +466,7 @@ On Windows with the project virtual environment:
 
 Current verified result in this repository:
 
-- `117 passed`
+- `136 passed`
 
 ---
 

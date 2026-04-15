@@ -12,6 +12,7 @@ from network_security_monitor.threat_detector import (
     DDoSDetector,
     DnsTunnelingDetector,
     MaliciousIPDetector,
+    ModbusCommandSpikeDetector,
     PhishingDetector,
     PortScanDetector,
     SuspiciousPortDetector,
@@ -275,6 +276,45 @@ class TestDnsTunnelingDetector:
 
 
 # ---------------------------------------------------------------------------
+# ModbusCommandSpikeDetector
+# ---------------------------------------------------------------------------
+
+class TestModbusCommandSpikeDetector:
+    def test_ignores_non_modbus_ports(self):
+        cfg = _make_config(MODBUS_COMMAND_SPIKE_THRESHOLD=3, MODBUS_TIME_WINDOW=30)
+        det = ModbusCommandSpikeDetector(cfg)
+        for _ in range(5):
+            assert det.inspect(_pkt(dst_port=80, payload=b"\x00" * 12)) == []
+
+    def test_alerts_on_repeated_modbus_function_code(self):
+        cfg = _make_config(
+            MODBUS_PORTS={502},
+            MODBUS_COMMAND_SPIKE_THRESHOLD=4,
+            MODBUS_TIME_WINDOW=20,
+        )
+        det = ModbusCommandSpikeDetector(cfg)
+        ts = time.time()
+        alerts = []
+        payload = b"\x00\x01\x00\x00\x00\x06\x01\x03\x00\x00\x00\x01"
+        for i in range(6):
+            alerts.extend(
+                det.inspect(
+                    _pkt(
+                        src_ip="10.20.30.40",
+                        dst_ip="192.168.50.10",
+                        dst_port=502,
+                        payload=payload,
+                        ts=ts + i,
+                    )
+                )
+            )
+        assert any(a.threat_type == ThreatType.MODBUS_COMMAND_SPIKE for a in alerts)
+        modbus_alert = [a for a in alerts if a.threat_type == ThreatType.MODBUS_COMMAND_SPIKE][0]
+        assert modbus_alert.severity == AlertSeverity.HIGH
+        assert modbus_alert.metadata["function_code"] == 3
+
+
+# ---------------------------------------------------------------------------
 # SuspiciousPortDetector
 # ---------------------------------------------------------------------------
 
@@ -369,6 +409,30 @@ class TestThreatDetector:
         types = {a.threat_type for a in alerts}
         assert ThreatType.SUSPICIOUS_PORT in types
         assert ThreatType.MALICIOUS_IP in types
+
+    def test_detects_modbus_command_spike(self):
+        cfg = _make_config(
+            MODBUS_PORTS={502},
+            MODBUS_COMMAND_SPIKE_THRESHOLD=3,
+            MODBUS_TIME_WINDOW=10,
+        )
+        det = ThreatDetector(cfg)
+        ts = time.time()
+        alerts = []
+        payload = b"\x00\x01\x00\x00\x00\x06\x01\x10\x00\x00\x00\x01"
+        for i in range(5):
+            alerts.extend(
+                det.inspect(
+                    _pkt(
+                        src_ip="10.10.10.5",
+                        dst_ip="192.168.1.50",
+                        dst_port=502,
+                        payload=payload,
+                        ts=ts + i,
+                    )
+                )
+            )
+        assert any(a.threat_type == ThreatType.MODBUS_COMMAND_SPIKE for a in alerts)
 
 
 class TestPhishingDetector:

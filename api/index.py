@@ -111,7 +111,7 @@ def root():
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Network Security Monitor</title>
+  <title>Network Security Monitoring System (NSMS)</title>
   <style>
     :root {
       --bg-1: #f4f8ff;
@@ -188,7 +188,7 @@ def root():
 <body>
   <main class="panel">
     <span class="badge">Serverless API Active</span>
-    <h1>Network Security Monitor</h1>
+    <h1>Network Security Monitoring System (NSMS)</h1>
     <p>
       This Vercel deployment provides lightweight API endpoints for status and
       integration checks. Live packet capture is not available in serverless runtime.

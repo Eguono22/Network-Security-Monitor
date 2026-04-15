@@ -324,6 +324,63 @@ class DnsTunnelingDetector:
 
 
 # ---------------------------------------------------------------------------
+# Modbus command spike detector
+# ---------------------------------------------------------------------------
+
+class ModbusCommandSpikeDetector:
+    """Detect bursts of repeated Modbus/TCP function codes against OT assets."""
+
+    def __init__(self, config: Config):
+        self._cfg = config
+        self._counters: defaultdict = defaultdict(
+            lambda: _SlidingWindowCounter(config.MODBUS_TIME_WINDOW)
+        )
+        self._alerted: dict = {}
+
+    def inspect(self, packet: Packet) -> List[Alert]:
+        if packet.dst_port not in self._cfg.MODBUS_PORTS and packet.src_port not in self._cfg.MODBUS_PORTS:
+            return []
+        if len(packet.payload) < 8:
+            return []
+
+        function_code = packet.payload[7]
+        now = packet.timestamp
+        target_ip = packet.dst_ip if packet.dst_port in self._cfg.MODBUS_PORTS else packet.src_ip
+        key = (packet.src_ip, target_ip, function_code)
+        counter = self._counters[key]
+        counter.add(ts=now)
+        count = counter.total(ts=now)
+
+        if count < self._cfg.MODBUS_COMMAND_SPIKE_THRESHOLD:
+            return []
+
+        last = self._alerted.get(key, 0)
+        if now - last < self._cfg.MODBUS_TIME_WINDOW:
+            return []
+        self._alerted[key] = now
+        return [
+            Alert(
+                threat_type=ThreatType.MODBUS_COMMAND_SPIKE,
+                severity=AlertSeverity.HIGH,
+                src_ip=packet.src_ip,
+                dst_ip=packet.dst_ip,
+                dst_port=packet.dst_port,
+                description=(
+                    f"Modbus command spike: function 0x{function_code:02X} observed "
+                    f"{count} times in {self._cfg.MODBUS_TIME_WINDOW}s"
+                ),
+                timestamp=now,
+                metadata={
+                    "function_code": function_code,
+                    "function_code_hex": f"0x{function_code:02X}",
+                    "command_count": count,
+                    "target_ip": target_ip,
+                },
+            )
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Suspicious-port detector
 # ---------------------------------------------------------------------------
 
@@ -594,6 +651,7 @@ class ThreatDetector:
             BruteForceDetector(cfg),
             DDoSDetector(cfg),
             DnsTunnelingDetector(cfg),
+            ModbusCommandSpikeDetector(cfg),
             SuspiciousPortDetector(cfg),
             MaliciousIPDetector(cfg),
             PhishingDetector(cfg),

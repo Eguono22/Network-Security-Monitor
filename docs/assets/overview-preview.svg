@@ -17,7 +17,7 @@
   <circle cx="160" cy="110" r="180" fill="#0B7285" fill-opacity="0.08"/>
   <circle cx="1030" cy="640" r="220" fill="#0F766E" fill-opacity="0.08"/>
 
-  <text x="72" y="74" fill="#0F172A" font-family="'Trebuchet MS', 'Segoe UI', sans-serif" font-size="34" font-weight="700">Network Security Monitor</text>
+  <text x="72" y="74" fill="#0F172A" font-family="'Trebuchet MS', 'Segoe UI', sans-serif" font-size="34" font-weight="700">Network Security Monitoring System (NSMS)</text>
   <text x="72" y="106" fill="#334155" font-family="'Trebuchet MS', 'Segoe UI', sans-serif" font-size="18">Preview of the current CLI, monitoring, and SOC workflow surfaces</text>
 
   <rect x="72" y="146" width="1056" height="74" rx="24" fill="#FFFFFF" fill-opacity="0.74" stroke="#C9D7DE"/>

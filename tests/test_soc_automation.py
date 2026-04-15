@@ -116,3 +116,18 @@ class TestSOCAutomationEngine:
             assert any(o["action"]["type"] == "auto_contain_host" for o in outputs)
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_ot_alert_routes_to_ot_security_queue(self):
+        tmp_root = Path(".test_tmp") / f"soc-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            cfg = Config()
+            cfg.SOC_AUTOMATION_LOG_FILE = str(tmp_root / "soc" / "actions.jsonl")
+            cfg.INCIDENTS_LOG_FILE = str(tmp_root / "soc" / "incidents.db")
+            engine = SOCAutomationEngine(cfg)
+            outputs = engine.handle_alert(_make_alert(threat_type=ThreatType.MODBUS_COMMAND_SPIKE))
+            create_case = [o for o in outputs if o["action"]["type"] == "create_case"]
+            assert create_case
+            assert create_case[0]["action"]["queue"] == "ot-security"
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

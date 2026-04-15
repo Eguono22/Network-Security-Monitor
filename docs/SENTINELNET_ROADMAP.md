@@ -46,4 +46,4 @@
 - [ ] Add `/api/incidents` + `/soc-management/incidents` table
 - [x] Add alert-to-case auto-link from SOC automation actions
 - [x] Add basic threat-intel enrichment mock endpoint
-- [ ] Add one OT detector stub (`modbus_command_spike`) with tests
+- [x] Add one OT detector stub (`modbus_command_spike`) with tests

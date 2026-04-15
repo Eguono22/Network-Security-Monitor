@@ -59,6 +59,14 @@ class Config:
     DNS_TIME_WINDOW: int = 90  # seconds
 
     # ---------------------------------------------------------------------------
+    # OT / Modbus monitoring
+    # ---------------------------------------------------------------------------
+    # Detect repeated Modbus/TCP function calls against a PLC or OT endpoint.
+    MODBUS_PORTS: Set[int] = {502}
+    MODBUS_COMMAND_SPIKE_THRESHOLD: int = 20
+    MODBUS_TIME_WINDOW: int = 30  # seconds
+
+    # ---------------------------------------------------------------------------
     # Suspicious ports
     # ---------------------------------------------------------------------------
     # Connections to these destination ports are flagged immediately.

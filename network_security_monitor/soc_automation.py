@@ -126,6 +126,10 @@ class SOCAutomationEngine:
                 {"type": "create_case", "queue": "dns-security"},
                 {"type": "recommend_dns_sinkhole_review", "target": alert.src_ip},
             ],
+            ThreatType.MODBUS_COMMAND_SPIKE: [
+                {"type": "create_case", "queue": "ot-security"},
+                {"type": "recommend_plc_session_review", "target": alert.dst_ip or alert.src_ip},
+            ],
             ThreatType.SUSPICIOUS_PORT: [
                 {"type": "create_case", "queue": "soc-triage"},
             ],

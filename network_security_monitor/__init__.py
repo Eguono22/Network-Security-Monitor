@@ -1,5 +1,5 @@
 """
-Network Security Monitor (NSM)
+Network Security Monitoring System (NSMS)
 
 A system for continuously monitoring, analyzing, and detecting suspicious activity
 across a network. Identifies threats such as port scans, SYN floods, brute-force

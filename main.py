@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Network Security Monitor – CLI entry point.
+Network Security Monitoring System (NSMS) – CLI entry point.
 
 Examples
 --------
@@ -226,7 +226,7 @@ def _simulate_traffic(monitor: NetworkMonitor, duration: float = 30.0) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nsm",
-        description="Network Security Monitor",
+        description="Network Security Monitoring System (NSMS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
