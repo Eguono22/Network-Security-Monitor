@@ -21,6 +21,7 @@ from .incident_manager import (
     IncidentValidationError,
 )
 from .storage import AlertLogStore, AlertRepository, AlertStore, IncidentStore, JsonlStore
+from .threat_intel import ThreatIntelService
 
 __all__ = [
     "Config",
@@ -37,6 +38,7 @@ __all__ = [
     "IncidentValidationError",
     "VALID_INCIDENT_STATUSES",
     "ACTIVE_INCIDENT_STATUSES",
+    "ThreatIntelService",
     "AlertLogStore",
     "AlertRepository",
     "AlertStore",

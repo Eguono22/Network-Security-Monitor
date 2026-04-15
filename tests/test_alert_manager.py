@@ -166,3 +166,21 @@ class TestAlertManager:
             assert payload["raw"]
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_structured_alert_store_preserves_incident_links(self):
+        tmp_root = Path(".test_tmp") / f"alerts-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        cfg = Config()
+        cfg.ALERTS_DATA_FILE = str(tmp_root / "alerts.jsonl")
+        alert = _make_alert(severity=AlertSeverity.HIGH)
+        alert.metadata["incident_ids"] = ["INC-123", "INC-456"]
+        am = AlertManager(cfg)
+        am.add(alert)
+
+        try:
+            lines = (tmp_root / "alerts.jsonl").read_text(encoding="utf-8").splitlines()
+            payload = json.loads(lines[0])
+            assert payload["incident_ids"] == ["INC-123", "INC-456"]
+            assert payload["metadata"]["incident_ids"] == ["INC-123", "INC-456"]
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

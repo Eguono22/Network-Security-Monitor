@@ -116,6 +116,7 @@ Available routes:
 - `GET /api/alerts`
 - `GET /api/network-watcher`
 - `GET /api/soc-summary`
+- `GET /api/threat-intel`
 - `GET /api/incidents`
 - `GET /api/incidents/<incident_id>`
 - `PATCH /api/incidents/<incident_id>`
@@ -139,6 +140,7 @@ Example payload from `GET /api/alerts`:
       "severity": "HIGH",
       "threat_type": "PORT_SCAN",
       "src_ip": "10.0.0.1",
+      "incident_ids": ["INC-95CB7B941FA4"],
       "raw": "2026-04-03 00:07:53,016 ERROR [2026-04-03 00:07:53] [HIGH] [PORT_SCAN] src=10.0.0.1 Test alert"
     },
     {
@@ -146,6 +148,7 @@ Example payload from `GET /api/alerts`:
       "severity": "CRITICAL",
       "threat_type": "SYN_FLOOD",
       "src_ip": "10.0.99.1",
+      "incident_ids": ["INC-6B877347D08D"],
       "raw": "2026-04-03 00:07:54,123 ERROR [2026-04-03 00:07:54] [CRITICAL] [SYN_FLOOD] src=10.0.99.1 SYN flood detected"
     }
   ]
@@ -199,6 +202,42 @@ Example filtering request:
 GET /api/incidents?status=open&queue=soc-triage&limit=10
 ```
 
+Example threat-intel request:
+
+```text
+GET /api/threat-intel?indicator=203.0.113.5
+```
+
+Example threat-intel response:
+
+```json
+{
+  "indicator": "203.0.113.5",
+  "indicator_type": "ip",
+  "verdict": "suspicious",
+  "confidence": 0.8,
+  "reputation_score": 76,
+  "summary": "Linked to 1 recent incident case(s).",
+  "tags": ["mock-intel", "threat:MALICIOUS_IP", "recent-alert-match", "incident-linked"],
+  "sources": [
+    {
+      "name": "sentinelnet-mock-intel",
+      "confidence": 0.55
+    }
+  ],
+  "related": {
+    "alerts": 1,
+    "incidents": 1
+  },
+  "recent_threats": [
+    {
+      "threat_type": "MALICIOUS_IP",
+      "count": 2
+    }
+  ]
+}
+```
+
 Example update request to `PATCH /api/incidents/<incident_id>`:
 
 ```json
@@ -235,6 +274,7 @@ SOC automation features:
 - Playbook-based response actions for alerts
 - JSONL audit trail in `soc_actions.log`
 - Incident case persistence in `incidents.db`
+- Alert-to-case linking in structured alert records via `incident_ids`
 - Cooldown handling to reduce duplicate automation noise
 
 ---

@@ -116,6 +116,8 @@ class AlertStore(JsonlStore):
 
     @staticmethod
     def serialize_alert(alert: Alert) -> dict[str, Any]:
+        metadata = dict(alert.metadata or {})
+        incident_ids = AlertStore._incident_ids_from_metadata(metadata)
         return {
             "timestamp": alert.timestamp,
             "iso_time": datetime.fromtimestamp(alert.timestamp, tz=timezone.utc).isoformat(),
@@ -125,9 +127,27 @@ class AlertStore(JsonlStore):
             "dst_ip": alert.dst_ip,
             "dst_port": alert.dst_port,
             "description": alert.description,
-            "metadata": alert.metadata,
+            "metadata": metadata,
+            "incident_ids": incident_ids,
             "raw": str(alert),
         }
+
+    @staticmethod
+    def _incident_ids_from_metadata(metadata: dict[str, Any]) -> list[str]:
+        raw = metadata.get("incident_ids", [])
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        incident_ids: list[str] = []
+        for item in raw:
+            value = str(item).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            incident_ids.append(value)
+        return incident_ids
 
 
 class AlertRepository:

@@ -15,6 +15,8 @@ from network_security_monitor.incident_manager import (
     IncidentValidationError,
 )
 from network_security_monitor.storage import AlertRepository, JsonlStore
+from network_security_monitor.threat_intel import ThreatIntelService
+from network_security_monitor.config import Config
 
 
 app = Flask(__name__)
@@ -212,6 +214,10 @@ def root():
         <strong>Incident API</strong>
         <p>Query incident cases at <code>/api/incidents</code>.</p>
       </section>
+      <section class="item">
+        <strong>Threat Intel</strong>
+        <p>Enrich an indicator at <code>/api/threat-intel?indicator=1.2.3.4</code>.</p>
+      </section>
     </div>
   </main>
 </body>
@@ -243,6 +249,23 @@ def api_network_watcher():
 @app.get("/api/soc-summary")
 def api_soc_summary():
     return jsonify(_soc_management_snapshot())
+
+
+@app.get("/api/threat-intel")
+def api_threat_intel():
+    indicator = request.args.get("indicator", "").strip()
+    if not indicator:
+        return jsonify({"error": "missing_indicator", "message": "indicator query parameter is required"}), 400
+
+    config = Config()
+    service = ThreatIntelService(config.KNOWN_MALICIOUS_IPS)
+    payload = service.lookup(
+        indicator,
+        indicator_type=request.args.get("type", ""),
+        alerts=_load_recent_alerts(limit=200),
+        incidents=_load_incidents(limit=200),
+    )
+    return jsonify(payload)
 
 
 @app.get("/api/incidents")

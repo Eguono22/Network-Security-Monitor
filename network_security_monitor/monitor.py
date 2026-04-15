@@ -82,9 +82,9 @@ class NetworkMonitor:
 
         alerts = self._detector.inspect(packet)
         for alert in alerts:
-            self._alert_manager.add(alert)
-            # SOC automation runs after alert persistence and notification.
             self._soc_automation.handle_alert(alert)
+            # Persist the alert after automation so case links are captured once.
+            self._alert_manager.add(alert)
 
         return alerts
 

@@ -51,6 +51,25 @@ class TestSOCAutomationEngine:
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_handle_alert_annotates_alert_with_incident_link(self):
+        tmp_root = Path(".test_tmp") / f"soc-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            cfg = Config()
+            cfg.SOC_AUTOMATION_LOG_FILE = str(tmp_root / "soc" / "actions.jsonl")
+            cfg.INCIDENTS_LOG_FILE = str(tmp_root / "soc" / "incidents.db")
+            cfg.SOC_AUTOMATION_MIN_SEVERITY = "HIGH"
+            engine = SOCAutomationEngine(cfg)
+            alert = _make_alert()
+            outputs = engine.handle_alert(alert)
+            create_case = [o for o in outputs if o["action"]["type"] == "create_case"]
+            assert create_case
+            incident_id = create_case[0]["action"]["incident_id"]
+            assert alert.metadata["incident_ids"] == [incident_id]
+            assert "create_case" in alert.metadata["soc_action_types"]
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
     def test_respects_min_severity(self):
         tmp_root = Path(".test_tmp") / f"soc-{uuid.uuid4().hex}"
         tmp_root.mkdir(parents=True, exist_ok=True)

@@ -47,6 +47,8 @@ class SOCAutomationEngine:
             return []
 
         outputs = []
+        linked_incident_ids: list[str] = []
+        action_types: list[str] = []
         now = time.time()
         for action in actions:
             action_payload = dict(action)
@@ -55,6 +57,8 @@ class SOCAutomationEngine:
                     alert, queue=action_payload.get("queue", "soc-triage")
                 )
                 action_payload["incident_id"] = case["incident_id"]
+                linked_incident_ids.append(case["incident_id"])
+            action_types.append(str(action_payload.get("type", "")).strip())
             payload = {
                 "timestamp": now,
                 "threat_type": alert.threat_type.value,
@@ -68,6 +72,7 @@ class SOCAutomationEngine:
             self._write_action(payload)
             outputs.append(payload)
 
+        self._annotate_alert(alert, linked_incident_ids, action_types)
         self._counts["executions"] += 1
         self._counts["actions"] += len(outputs)
         self._cooldowns[(alert.threat_type.value, alert.src_ip)] = now
@@ -140,3 +145,30 @@ class SOCAutomationEngine:
 
     def _write_action(self, payload: dict) -> None:
         self._action_store.append(payload)
+
+    @staticmethod
+    def _annotate_alert(alert: Alert, incident_ids: list[str], action_types: list[str]) -> None:
+        metadata = dict(alert.metadata or {})
+        if incident_ids:
+            existing = metadata.get("incident_ids", [])
+            if isinstance(existing, str):
+                existing = [existing]
+            if not isinstance(existing, list):
+                existing = []
+            combined = list(existing)
+            for incident_id in incident_ids:
+                if incident_id not in combined:
+                    combined.append(incident_id)
+            metadata["incident_ids"] = combined
+        if action_types:
+            existing_types = metadata.get("soc_action_types", [])
+            if isinstance(existing_types, str):
+                existing_types = [existing_types]
+            if not isinstance(existing_types, list):
+                existing_types = []
+            combined_types = list(existing_types)
+            for action_type in action_types:
+                if action_type and action_type not in combined_types:
+                    combined_types.append(action_type)
+            metadata["soc_action_types"] = combined_types
+        alert.metadata = metadata

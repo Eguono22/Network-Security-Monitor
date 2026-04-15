@@ -27,6 +27,7 @@ class TestApiRoutes:
                     "src_ip": "10.0.0.99",
                     "description": "Port scan detected",
                     "metadata": {},
+                    "incident_ids": ["INC-PORTSCAN1"],
                     "raw": "[2026-04-03 00:07:53] [HIGH] [PORT_SCAN] src=10.0.0.99 Port scan detected",
                 }
             )
@@ -43,6 +44,7 @@ class TestApiRoutes:
             assert payload["count"] == 1
             assert payload["alerts"][0]["src_ip"] == "10.0.0.99"
             assert payload["alerts"][0]["threat_type"] == "PORT_SCAN"
+            assert payload["alerts"][0]["incident_ids"] == ["INC-PORTSCAN1"]
         finally:
             if prior is None:
                 os.environ.pop("NSM_ALERTS_DATA_FILE", None)
@@ -291,3 +293,82 @@ class TestApiRoutes:
             else:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_threat_intel_uses_local_context(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-intel-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        alerts_path = tmp_root / "alerts.jsonl"
+        incidents_path = tmp_root / "incidents.jsonl"
+        alerts_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": 1775344876.0,
+                    "iso_time": "2026-04-03T19:07:56+00:00",
+                    "severity": "CRITICAL",
+                    "threat_type": "MALICIOUS_IP",
+                    "src_ip": "203.0.113.5",
+                    "description": "Known bad host observed",
+                    "metadata": {"incident_ids": ["INC-INTEL1"]},
+                    "incident_ids": ["INC-INTEL1"],
+                    "raw": "[2026-04-03 00:07:53] [CRITICAL] [MALICIOUS_IP] src=203.0.113.5 Known bad host observed",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-INTEL1",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "CRITICAL",
+                    "queue": "threat-intel",
+                    "threat_type": "MALICIOUS_IP",
+                    "src_ip": "203.0.113.5",
+                    "description": "Known bad host observed",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.get("/api/threat-intel?indicator=203.0.113.5")
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["indicator"] == "203.0.113.5"
+            assert payload["indicator_type"] == "ip"
+            assert payload["related"]["alerts"] == 1
+            assert payload["related"]["incidents"] == 1
+            assert payload["verdict"] in {"suspicious", "malicious"}
+            assert "incident-linked" in payload["tags"]
+        finally:
+            if prior_alerts is None:
+                os.environ.pop("NSM_ALERTS_DATA_FILE", None)
+            else:
+                os.environ["NSM_ALERTS_DATA_FILE"] = prior_alerts
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_threat_intel_requires_indicator(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        client = app.test_client()
+        res = client.get("/api/threat-intel")
+        assert res.status_code == 400
+        payload = res.get_json()
+        assert payload["error"] == "missing_indicator"

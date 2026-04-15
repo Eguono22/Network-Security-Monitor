@@ -1,6 +1,10 @@
 """Unit tests for NetworkMonitor."""
 
+import json
 import time
+import uuid
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -151,6 +155,28 @@ class TestNetworkMonitorAlerts:
         monitor = NetworkMonitor(cfg)
         alerts = monitor.process_packet(_pkt(src_ip="9.9.9.9"))
         assert any(a.threat_type == ThreatType.MALICIOUS_IP for a in alerts)
+
+    def test_generated_alert_is_linked_to_created_incident(self):
+        tmp_root = Path(".test_tmp") / f"monitor-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            cfg = _cfg(
+                SUSPICIOUS_PORTS={4444},
+                ALERTS_DATA_FILE=str(tmp_root / "alerts.jsonl"),
+                SOC_AUTOMATION_MIN_SEVERITY="MEDIUM",
+                SOC_AUTOMATION_COOLDOWN_SECONDS=0,
+                INCIDENTS_LOG_FILE=str(tmp_root / "incidents.db"),
+            )
+            monitor = NetworkMonitor(cfg)
+            alerts = monitor.process_packet(_pkt(dst_port=4444))
+            assert len(alerts) == 1
+            assert alerts[0].metadata["incident_ids"]
+
+            lines = (tmp_root / "alerts.jsonl").read_text(encoding="utf-8").splitlines()
+            payload = json.loads(lines[0])
+            assert payload["incident_ids"] == alerts[0].metadata["incident_ids"]
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 class TestNetworkMonitorLifecycle:

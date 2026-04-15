@@ -44,6 +44,6 @@
 ## Immediate Next Sprint (Recommended)
 - [ ] Add incident case object + local persistence (`incidents.db`)
 - [ ] Add `/api/incidents` + `/soc-management/incidents` table
-- [ ] Add alert-to-case auto-link from SOC automation actions
-- [ ] Add basic threat-intel enrichment mock endpoint
+- [x] Add alert-to-case auto-link from SOC automation actions
+- [x] Add basic threat-intel enrichment mock endpoint
 - [ ] Add one OT detector stub (`modbus_command_spike`) with tests
