@@ -5,16 +5,22 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
-Network Security Monitoring System (NSMS) is a Python-based network security monitoring project that captures or simulates traffic, detects suspicious behavior, and surfaces alerts through CLI, log, and lightweight web interfaces.
+Network Security Monitoring System (NSMS) is a Python-based network security
+monitoring project that captures or simulates traffic, detects suspicious
+behavior, and surfaces alerts through CLI, log, and lightweight web
+interfaces.
 
-Project vision: evolve this into `SentinelNet`, a fuller NSMS platform with SOC workflows, incident response, and OT-aware monitoring.
+Project vision: evolve this into `SentinelNet`, a fuller NSMS platform with
+SOC workflows, incident response, and OT-aware monitoring.
 
 ---
 
 ## What It Does
 
 - Monitors traffic in live capture mode or replay-style simulation mode
-- Detects common threat patterns such as port scans, SYN floods, brute force attempts, DDoS bursts, DNS tunneling, phishing indicators, suspicious ports, data exfiltration, and traffic anomalies
+- Detects common threat patterns such as port scans, SYN floods, brute force
+  attempts, DDoS bursts, DNS tunneling, phishing indicators, suspicious ports,
+  data exfiltration, and traffic anomalies
 - Stores and forwards alerts through log files, webhooks, Slack, email, and SIEM-style JSONL output
 - Supports SOC-style automation with case logging and action cooldowns
 - Exposes a minimal Flask/Vercel API for dashboards, alert summaries, and incident views
@@ -26,8 +32,10 @@ Project vision: evolve this into `SentinelNet`, a fuller NSMS platform with SOC 
 The strongest near-term product direction for this repo is:
 
 - Primary user: SMB IT admin or small SOC team
-- Primary promise: detect suspicious network activity quickly and make triage understandable
-- Primary success metric: a new user can install the project, run a simulation, and inspect meaningful alerts within a few minutes
+- Primary promise: detect suspicious network activity quickly and make triage
+  understandable
+- Primary success metric: a new user can install the project, run a
+  simulation, and inspect meaningful alerts within a few minutes
 
 ---
 
@@ -104,7 +112,9 @@ python main.py --live --interface eth0 --live-duration 1800
 
 ### API / Dashboard
 
-The repository includes a Flask-based entrypoint for lightweight API and dashboard views, including Vercel-compatible serverless deployment for read-only monitoring surfaces.
+The repository includes a Flask-based entrypoint for lightweight API and
+dashboard views, including Vercel-compatible serverless deployment for
+read-only monitoring surfaces.
 
 Available routes:
 
@@ -121,9 +131,11 @@ Available routes:
 - `GET /api/incidents/<incident_id>`
 - `PATCH /api/incidents/<incident_id>`
 
-Note: live packet capture is not available in Vercel's serverless runtime. Use a VM, container, or host with raw network access for `--live`.
+Note: live packet capture is not available in Vercel's serverless runtime. Use
+a VM, container, or host with raw network access for `--live`.
 
-When `NSM_ALERTS_DATA_FILE` is configured, the API prefers structured alert JSONL records over parsing `alerts.log`.
+When `NSM_ALERTS_DATA_FILE` is configured, the API prefers structured alert
+JSONL records over parsing `alerts.log`.
 
 ---
 
@@ -140,7 +152,9 @@ Example payload from `GET /api/alerts`:
       "severity": "HIGH",
       "threat_type": "PORT_SCAN",
       "src_ip": "10.0.0.1",
-      "incident_ids": ["INC-95CB7B941FA4"],
+      "incident_ids": [
+        "INC-95CB7B941FA4"
+      ],
       "raw": "2026-04-03 00:07:53,016 ERROR [2026-04-03 00:07:53] [HIGH] [PORT_SCAN] src=10.0.0.1 Test alert"
     },
     {
@@ -148,7 +162,9 @@ Example payload from `GET /api/alerts`:
       "severity": "CRITICAL",
       "threat_type": "SYN_FLOOD",
       "src_ip": "10.0.99.1",
-      "incident_ids": ["INC-6B877347D08D"],
+      "incident_ids": [
+        "INC-6B877347D08D"
+      ],
       "raw": "2026-04-03 00:07:54,123 ERROR [2026-04-03 00:07:54] [CRITICAL] [SYN_FLOOD] src=10.0.99.1 SYN flood detected"
     }
   ]
@@ -250,7 +266,8 @@ Example update request to `PATCH /api/incidents/<incident_id>`:
 }
 ```
 
-These examples are representative of the current API shapes in `api/index.py` and help show what downstream integrations can expect.
+These examples are representative of the current API shapes in `api/index.py`
+and help show what downstream integrations can expect.
 
 ---
 
@@ -292,7 +309,8 @@ At a high level, the project follows a simple monitoring pipeline:
 5. `soc_automation.py` and `incident_manager.py` add response tracking and case persistence
 6. `dashboard.py` and `api/index.py` expose human-friendly views of the results
 
-This keeps packet parsing, detection, alerting, response, and presentation separated enough to test each layer independently.
+This keeps packet parsing, detection, alerting, response, and presentation
+separated enough to test each layer independently.
 
 ---
 
@@ -501,7 +519,8 @@ Suggested local workflow:
 3. Run `.\.venv\Scripts\python.exe -m pytest tests\ -v` on Windows, or `pytest tests/ -v` elsewhere
 4. Validate your change in simulation mode with `python main.py --simulate --no-dashboard`
 
-Keep changes focused, preserve existing behavior unless the change is intentional, and add tests when detector or workflow logic changes.
+Keep changes focused, preserve existing behavior unless the change is
+intentional, and add tests when detector or workflow logic changes.
 
 ---
 
