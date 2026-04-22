@@ -154,6 +154,9 @@ class Config:
     # are imported automatically when the sibling database is first created.
     INCIDENTS_LOG_FILE: str = "incidents.db"
     SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL: bool = False
+    # API/UI role defaults. Existing local behavior stays permissive unless this
+    # is overridden by environment or an upstream proxy injects X-NSM-Role.
+    API_DEFAULT_ROLE: str = "admin"
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -206,6 +209,7 @@ class Config:
             os.getenv("NSM_SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL"),
             self.SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL,
         )
+        self.API_DEFAULT_ROLE = os.getenv("NSM_API_DEFAULT_ROLE", self.API_DEFAULT_ROLE).strip().lower()
         trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
         if trusted_sources.strip():
             self.PORT_SCAN_TRUSTED_SOURCES = {

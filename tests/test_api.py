@@ -1,9 +1,11 @@
 """Tests for Vercel API routes."""
 
+import csv
 import json
 import os
 import shutil
 import uuid
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -205,6 +207,87 @@ class TestApiRoutes:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_api_incidents_export_csv_returns_filtered_rows(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incidents-export-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "incident_id": "INC-CSV1",
+                            "created_at": 1,
+                            "updated_at": 2,
+                            "status": "assigned",
+                            "severity": "HIGH",
+                            "queue": "soc-triage",
+                            "threat_type": "PORT_SCAN",
+                            "src_ip": "1.1.1.1",
+                            "assignee": "alice",
+                            "owner": "tier-1",
+                            "metadata": {"ticket_id": "SOC-101"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "incident_id": "INC-CSV2",
+                            "created_at": 3,
+                            "updated_at": 4,
+                            "status": "resolved",
+                            "severity": "CRITICAL",
+                            "queue": "network-incident",
+                            "threat_type": "DDOS",
+                            "src_ip": "2.2.2.2",
+                            "assignee": "bob",
+                            "owner": "tier-2",
+                            "metadata": {"ticket_id": "SOC-102"},
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.get(
+                "/api/incidents/export.csv?status=assigned&assignee=alice",
+                headers={"X-NSM-Role": "analyst"},
+            )
+            assert res.status_code == 200
+            assert res.mimetype == "text/csv"
+            assert "attachment; filename=" in res.headers["Content-Disposition"]
+
+            rows = list(csv.DictReader(StringIO(res.get_data(as_text=True))))
+            assert len(rows) == 1
+            assert rows[0]["incident_id"] == "INC-CSV1"
+            assert rows[0]["assignee"] == "alice"
+            assert json.loads(rows[0]["metadata"]) == {"ticket_id": "SOC-101"}
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incidents_export_csv_denies_viewer_role(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        client = app.test_client()
+        res = client.get("/api/incidents/export.csv", headers={"X-NSM-Role": "viewer"})
+        assert res.status_code == 403
+        payload = res.get_json()
+        assert payload["error"] == "insufficient_role"
+        assert payload["required_role"] == "analyst"
+        assert payload["current_role"] == "viewer"
+
     def test_api_incident_update_returns_updated_case(self):
         pytest.importorskip("flask")
         from api.index import app
@@ -236,6 +319,7 @@ class TestApiRoutes:
             res = client.patch(
                 "/api/incidents/INC-UPD1",
                 json={"status": "assigned", "assignee": "alice", "metadata": {"ticket_id": "SOC-9"}},
+                headers={"X-NSM-Role": "analyst"},
             )
             assert res.status_code == 200
             payload = res.get_json()
@@ -254,6 +338,22 @@ class TestApiRoutes:
             else:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incident_update_denies_viewer_role(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        client = app.test_client()
+        res = client.patch(
+            "/api/incidents/INC-UPD1",
+            json={"status": "assigned"},
+            headers={"X-NSM-Role": "viewer"},
+        )
+        assert res.status_code == 403
+        payload = res.get_json()
+        assert payload["error"] == "insufficient_role"
+        assert payload["required_role"] == "analyst"
+        assert payload["current_role"] == "viewer"
 
     def test_api_incident_update_rejects_invalid_status(self):
         pytest.importorskip("flask")
@@ -283,7 +383,11 @@ class TestApiRoutes:
         os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
         try:
             client = app.test_client()
-            res = client.patch("/api/incidents/INC-UPD2", json={"status": "closed"})
+            res = client.patch(
+                "/api/incidents/INC-UPD2",
+                json={"status": "closed"},
+                headers={"X-NSM-Role": "analyst"},
+            )
             assert res.status_code == 400
             payload = res.get_json()
             assert payload["error"] == "invalid_incident_update"
@@ -293,6 +397,16 @@ class TestApiRoutes:
             else:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incidents_rejects_invalid_role_header(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        client = app.test_client()
+        res = client.get("/api/incidents", headers={"X-NSM-Role": "guest"})
+        assert res.status_code == 403
+        payload = res.get_json()
+        assert payload["error"] == "invalid_role"
 
     def test_api_threat_intel_uses_local_context(self):
         pytest.importorskip("flask")
@@ -496,7 +610,10 @@ class TestApiRoutes:
         os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
         try:
             client = app.test_client()
-            res = client.get("/soc-management?status=assigned&assignee=alice&incident_id=INC-SOC1")
+            res = client.get(
+                "/soc-management?status=assigned&assignee=alice&incident_id=INC-SOC1",
+                headers={"X-NSM-Role": "viewer"},
+            )
             assert res.status_code == 200
             body = res.get_data(as_text=True)
             assert "Incident Queue Filters" in body
@@ -505,6 +622,9 @@ class TestApiRoutes:
             assert "Port scan against edge host" in body
             assert "SOC-17" in body
             assert "Needs review" in body
+            assert "Read-only mode active" in body
+            assert "Save Incident Update" not in body
+            assert "Incidents CSV (analyst+)" in body
             assert "INC-SOC2" not in body
         finally:
             if prior is None:
@@ -553,6 +673,7 @@ class TestApiRoutes:
                     "filter_status": "active",
                     "filter_assignee": "alice",
                 },
+                headers={"X-NSM-Role": "analyst"},
                 follow_redirects=False,
             )
             assert res.status_code == 303

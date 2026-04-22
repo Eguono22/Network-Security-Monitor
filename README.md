@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-136%20passed-2ea44f)
+![Tests](https://img.shields.io/badge/tests-144%20passed-2ea44f)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -128,6 +128,7 @@ Available routes:
 - `GET /api/soc-summary`
 - `GET /api/threat-intel`
 - `GET /api/incidents`
+- `GET /api/incidents/export.csv`
 - `GET /api/incidents/<incident_id>`
 - `PATCH /api/incidents/<incident_id>`
 
@@ -136,6 +137,13 @@ a VM, container, or host with raw network access for `--live`.
 
 When `NSM_ALERTS_DATA_FILE` is configured, the API prefers structured alert
 JSONL records over parsing `alerts.log`.
+
+SOC access control:
+
+- Set `NSM_API_DEFAULT_ROLE` to `viewer`, `analyst`, or `admin`
+- Override the effective role per request with the `X-NSM-Role` header
+- `viewer` is read-only for SOC views
+- `analyst` and `admin` can update incidents and export CSV
 
 ---
 
@@ -216,6 +224,12 @@ Example filtering request:
 
 ```text
 GET /api/incidents?status=open&queue=soc-triage&limit=10
+```
+
+Example CSV export request:
+
+```text
+GET /api/incidents/export.csv?status=active&assignee=alice
 ```
 
 Example threat-intel request:
@@ -484,7 +498,7 @@ On Windows with the project virtual environment:
 
 Current verified result in this repository:
 
-- `136 passed`
+- `144 passed`
 
 ---
 
@@ -493,7 +507,7 @@ Current verified result in this repository:
 Near-term project direction for `SentinelNet`:
 
 - Complete persistent storage beyond log-backed files for alerts and incidents
-- Expand SOC operations with assignment, lifecycle states, and KPI/SLA tracking
+- Expand SOC operations with deeper analyst workflow and richer authorization policy
 - Add asset and network context such as inventory, topology, and per-segment baselines
 - Integrate threat intelligence enrichment sources and IOC management
 - Introduce OT-focused visibility starting with protocol-aware detections

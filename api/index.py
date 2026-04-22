@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import html
+import json
 import os
 from collections import Counter
 from datetime import datetime, timezone
+from io import StringIO
 from urllib.parse import urlencode
 
 from flask import Flask, Response, jsonify, redirect, request
@@ -23,6 +26,92 @@ from network_security_monitor.config import Config
 app = Flask(__name__)
 
 _MAX_RECENT = 100
+_VALID_API_ROLES = ("viewer", "analyst", "admin")
+_ROLE_RANK = {role: index for index, role in enumerate(_VALID_API_ROLES)}
+
+
+def _normalize_role(value) -> str:
+    role = str(value or "").strip().lower()
+    return role if role in _ROLE_RANK else ""
+
+
+def _current_role() -> str:
+    header_value = request.headers.get("X-NSM-Role", "")
+    role = _normalize_role(header_value)
+    if header_value and not role:
+        return ""
+    default_role = _normalize_role(Config().API_DEFAULT_ROLE)
+    return role or default_role or "admin"
+
+
+def _role_allowed(current_role: str, minimum_role: str) -> bool:
+    current = _normalize_role(current_role)
+    minimum = _normalize_role(minimum_role)
+    if not current or not minimum:
+        return False
+    return _ROLE_RANK[current] >= _ROLE_RANK[minimum]
+
+
+def _json_role_error(required_role: str, current_role: str, *, error: str) -> Response:
+    message = (
+        f"role '{current_role or 'unknown'}' does not satisfy required role '{required_role}'"
+        if error == "insufficient_role"
+        else f"role must be one of: {', '.join(_VALID_API_ROLES)}"
+    )
+    return (
+        jsonify(
+            {
+                "error": error,
+                "required_role": required_role,
+                "current_role": current_role or "unknown",
+                "allowed_roles": list(_VALID_API_ROLES),
+                "message": message,
+            }
+        ),
+        403,
+    )
+
+
+def _page_role_error(required_role: str, current_role: str) -> Response:
+    body = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Access Denied</title>
+  <style>
+    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; }}
+    main {{ max-width: 680px; margin: 64px auto; padding: 0 20px; }}
+    .card {{ background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 24px; }}
+    h1 {{ margin-top: 0; }}
+    p {{ color: #cbd5e1; line-height: 1.5; }}
+    code {{ background: #1e293b; padding: 2px 6px; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Access denied</h1>
+      <p>This SOC action requires the <code>{html.escape(required_role)}</code> role.</p>
+      <p>Current role: <code>{html.escape(current_role or 'unknown')}</code></p>
+    </section>
+  </main>
+</body>
+</html>"""
+    return Response(body, status=403, mimetype="text/html")
+
+
+def _require_role(minimum_role: str, *, page: bool = False):
+    current_role = _current_role()
+    if not current_role:
+        if page:
+            return None, _page_role_error(minimum_role, current_role)
+        return None, _json_role_error(minimum_role, current_role, error="invalid_role")
+    if not _role_allowed(current_role, minimum_role):
+        if page:
+            return current_role, _page_role_error(minimum_role, current_role)
+        return current_role, _json_role_error(minimum_role, current_role, error="insufficient_role")
+    return current_role, None
 
 
 def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
@@ -52,6 +141,8 @@ def _incident_filter_args() -> dict[str, str]:
         "status": request.args.get("status", "").strip(),
         "severity": request.args.get("severity", "").strip(),
         "queue": request.args.get("queue", "").strip(),
+        "threat_type": request.args.get("threat_type", "").strip(),
+        "src_ip": request.args.get("src_ip", "").strip(),
         "assignee": request.args.get("assignee", "").strip(),
         "owner": request.args.get("owner", "").strip(),
     }
@@ -60,6 +151,58 @@ def _incident_filter_args() -> dict[str, str]:
 def _build_query(params: dict[str, str]) -> str:
     filtered = {key: value for key, value in params.items() if value not in ("", None)}
     return urlencode(filtered)
+
+
+def _list_filtered_incidents(limit: int) -> list[dict]:
+    manager = _incident_manager()
+    return manager.list_cases(
+        limit=limit,
+        status=request.args.get("status", ""),
+        severity=request.args.get("severity", ""),
+        queue=request.args.get("queue", ""),
+        threat_type=request.args.get("threat_type", ""),
+        src_ip=request.args.get("src_ip", ""),
+        assignee=request.args.get("assignee", ""),
+        owner=request.args.get("owner", ""),
+    )
+
+
+def _incident_csv_response(incidents: list[dict]) -> Response:
+    fields = [
+        "incident_id",
+        "created_at",
+        "updated_at",
+        "status_changed_at",
+        "assigned_at",
+        "contained_at",
+        "resolved_at",
+        "status",
+        "queue",
+        "severity",
+        "threat_type",
+        "src_ip",
+        "dst_ip",
+        "dst_port",
+        "description",
+        "assignee",
+        "owner",
+        "notes",
+        "metadata",
+    ]
+    buffer = StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for incident in incidents:
+        row = dict(incident)
+        row["metadata"] = json.dumps(row.get("metadata") or {}, sort_keys=True)
+        writer.writerow(row)
+
+    filename = f"incidents-export-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.csv"
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _isoish_to_display(value) -> str:
@@ -277,7 +420,7 @@ def root():
       </section>
       <section class="item">
         <strong>Incident API</strong>
-        <p>Query incident cases at <code>/api/incidents</code>.</p>
+        <p>Query incident cases at <code>/api/incidents</code> or export CSV at <code>/api/incidents/export.csv</code>.</p>
       </section>
       <section class="item">
         <strong>Threat Intel</strong>
@@ -313,6 +456,9 @@ def api_network_watcher():
 
 @app.get("/api/soc-summary")
 def api_soc_summary():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
     return jsonify(_soc_management_snapshot())
 
 
@@ -335,26 +481,35 @@ def api_threat_intel():
 
 @app.get("/api/incidents")
 def api_incidents():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
     limit = _request_limit()
-    manager = _incident_manager()
     try:
-        incidents = manager.list_cases(
-            limit=limit,
-            status=request.args.get("status", ""),
-            severity=request.args.get("severity", ""),
-            queue=request.args.get("queue", ""),
-            threat_type=request.args.get("threat_type", ""),
-            src_ip=request.args.get("src_ip", ""),
-            assignee=request.args.get("assignee", ""),
-            owner=request.args.get("owner", ""),
-        )
+        incidents = _list_filtered_incidents(limit)
     except IncidentValidationError as exc:
         return jsonify({"error": "invalid_incident_filter", "message": str(exc)}), 400
     return jsonify({"count": len(incidents), "incidents": incidents})
 
 
+@app.get("/api/incidents/export.csv")
+def api_incidents_export_csv():
+    _, denial = _require_role("analyst")
+    if denial is not None:
+        return denial
+    limit = _request_limit(default=500)
+    try:
+        incidents = _list_filtered_incidents(limit)
+    except IncidentValidationError as exc:
+        return jsonify({"error": "invalid_incident_filter", "message": str(exc)}), 400
+    return _incident_csv_response(incidents)
+
+
 @app.get("/api/incidents/<incident_id>")
 def api_incident_detail(incident_id: str):
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
     manager = _incident_manager()
     incident = manager.get_case(incident_id)
     if incident is None:
@@ -364,6 +519,9 @@ def api_incident_detail(incident_id: str):
 
 @app.patch("/api/incidents/<incident_id>")
 def api_incident_update(incident_id: str):
+    _, denial = _require_role("analyst")
+    if denial is not None:
+        return denial
     manager = _incident_manager()
     payload = request.get_json(silent=True) or {}
     allowed = {
@@ -386,15 +544,30 @@ def api_incident_update(incident_id: str):
 
 @app.post("/soc-management/incidents/<incident_id>/update")
 def soc_management_incident_update(incident_id: str):
+    current_role = _current_role()
     manager = _incident_manager()
     filters = {
         "status": request.form.get("filter_status", "").strip(),
         "severity": request.form.get("filter_severity", "").strip(),
         "queue": request.form.get("filter_queue", "").strip(),
+        "threat_type": request.form.get("filter_threat_type", "").strip(),
+        "src_ip": request.form.get("filter_src_ip", "").strip(),
         "assignee": request.form.get("filter_assignee", "").strip(),
         "owner": request.form.get("filter_owner", "").strip(),
     }
     selected_id = request.form.get("incident_id", incident_id).strip() or incident_id
+    if not current_role or not _role_allowed(current_role, "analyst"):
+        query = _build_query(
+            {
+                **filters,
+                "incident_id": selected_id,
+                "error": f"role '{current_role or 'unknown'}' cannot update incidents",
+            }
+        )
+        location = "/soc-management"
+        if query:
+            location = f"{location}?{query}"
+        return redirect(location, code=303)
     allowed = ("status", "queue", "assignee", "owner", "notes")
     changes = {key: request.form.get(key, "").strip() for key in allowed if request.form.get(key) is not None}
     changes = {key: value for key, value in changes.items() if value}
@@ -565,6 +738,9 @@ def network_watcher():
 
 @app.get("/soc-management")
 def soc_management():
+    current_role, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
     snap = _soc_management_snapshot()
     manager = _incident_manager()
     metrics = snap.get("metrics", {})
@@ -603,45 +779,23 @@ def soc_management():
     ) or "<tr><td colspan='7'>No incidents matched the current filters.</td></tr>"
     active_filter_count = sum(1 for value in filters.values() if value)
     filter_query = _build_query(filters)
+    can_export = _role_allowed(current_role, "analyst")
+    can_update = _role_allowed(current_role, "analyst")
 
     incident_detail = ""
     if selected_incident is not None:
         metadata_items = _render_incident_detail_list(selected_incident.get("metadata") or {})
         notes = html.escape(str(selected_incident.get("notes", "") or ""))
-        incident_detail = f"""
-      <article class="card detail-card">
-        <div class="section-title">Incident Detail</div>
-        <h3>{html.escape(str(selected_incident.get('incident_id', 'n/a')))}</h3>
-        <div class="detail-grid">
-          <div><span>Status</span><strong>{html.escape(str(selected_incident.get('status', 'open')))}</strong></div>
-          <div><span>Severity</span><strong>{html.escape(str(selected_incident.get('severity', 'UNKNOWN')))}</strong></div>
-          <div><span>Queue</span><strong>{html.escape(str(selected_incident.get('queue', 'soc-triage')))}</strong></div>
-          <div><span>Assignee</span><strong>{html.escape(str(selected_incident.get('assignee', 'unassigned') or 'unassigned'))}</strong></div>
-          <div><span>Owner</span><strong>{html.escape(str(selected_incident.get('owner', 'unassigned') or 'unassigned'))}</strong></div>
-          <div><span>Source</span><strong>{html.escape(str(selected_incident.get('src_ip', 'n/a')))}</strong></div>
-          <div><span>Created</span><strong>{_isoish_to_display(selected_incident.get('created_at'))}</strong></div>
-          <div><span>Status Changed</span><strong>{_isoish_to_display(selected_incident.get('status_changed_at'))}</strong></div>
-          <div><span>Assigned</span><strong>{_isoish_to_display(selected_incident.get('assigned_at'))}</strong></div>
-          <div><span>Contained</span><strong>{_isoish_to_display(selected_incident.get('contained_at'))}</strong></div>
-          <div><span>Resolved</span><strong>{_isoish_to_display(selected_incident.get('resolved_at'))}</strong></div>
-          <div><span>Threat</span><strong>{html.escape(str(selected_incident.get('threat_type', 'UNKNOWN')))}</strong></div>
-        </div>
-        <p class="detail-description">{html.escape(str(selected_incident.get('description', 'No description provided.')))}</p>
-        <div class="detail-columns">
-          <section>
-            <h4>Notes</h4>
-            <p class="notes-box">{notes or 'No analyst notes yet.'}</p>
-          </section>
-          <section>
-            <h4>Metadata</h4>
-            <ul>{metadata_items}</ul>
-          </section>
-        </div>
+        update_section = ""
+        if can_update:
+            update_section = f"""
         <form method="post" action="/soc-management/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}/update" class="update-form">
           <input type="hidden" name="incident_id" value="{html.escape(str(selected_incident.get('incident_id', '')))}" />
           <input type="hidden" name="filter_status" value="{html.escape(filters['status'])}" />
           <input type="hidden" name="filter_severity" value="{html.escape(filters['severity'])}" />
           <input type="hidden" name="filter_queue" value="{html.escape(filters['queue'])}" />
+          <input type="hidden" name="filter_threat_type" value="{html.escape(filters['threat_type'])}" />
+          <input type="hidden" name="filter_src_ip" value="{html.escape(filters['src_ip'])}" />
           <input type="hidden" name="filter_assignee" value="{html.escape(filters['assignee'])}" />
           <input type="hidden" name="filter_owner" value="{html.escape(filters['owner'])}" />
           <div class="section-title">Update Incident</div>
@@ -672,7 +826,46 @@ def soc_management():
             <button type="submit">Save Incident Update</button>
             <a href="/api/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}">Open JSON</a>
           </div>
-        </form>
+        </form>"""
+        else:
+            update_section = f"""
+        <div class="read-only-note">
+          <div class="section-title">Update Incident</div>
+          <p>Read-only access. Incident updates require the <code>analyst</code> role or higher.</p>
+          <div class="form-actions">
+            <a href="/api/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}">Open JSON</a>
+          </div>
+        </div>"""
+        incident_detail = f"""
+      <article class="card detail-card">
+        <div class="section-title">Incident Detail</div>
+        <h3>{html.escape(str(selected_incident.get('incident_id', 'n/a')))}</h3>
+        <div class="detail-grid">
+          <div><span>Status</span><strong>{html.escape(str(selected_incident.get('status', 'open')))}</strong></div>
+          <div><span>Severity</span><strong>{html.escape(str(selected_incident.get('severity', 'UNKNOWN')))}</strong></div>
+          <div><span>Queue</span><strong>{html.escape(str(selected_incident.get('queue', 'soc-triage')))}</strong></div>
+          <div><span>Assignee</span><strong>{html.escape(str(selected_incident.get('assignee', 'unassigned') or 'unassigned'))}</strong></div>
+          <div><span>Owner</span><strong>{html.escape(str(selected_incident.get('owner', 'unassigned') or 'unassigned'))}</strong></div>
+          <div><span>Source</span><strong>{html.escape(str(selected_incident.get('src_ip', 'n/a')))}</strong></div>
+          <div><span>Created</span><strong>{_isoish_to_display(selected_incident.get('created_at'))}</strong></div>
+          <div><span>Status Changed</span><strong>{_isoish_to_display(selected_incident.get('status_changed_at'))}</strong></div>
+          <div><span>Assigned</span><strong>{_isoish_to_display(selected_incident.get('assigned_at'))}</strong></div>
+          <div><span>Contained</span><strong>{_isoish_to_display(selected_incident.get('contained_at'))}</strong></div>
+          <div><span>Resolved</span><strong>{_isoish_to_display(selected_incident.get('resolved_at'))}</strong></div>
+          <div><span>Threat</span><strong>{html.escape(str(selected_incident.get('threat_type', 'UNKNOWN')))}</strong></div>
+        </div>
+        <p class="detail-description">{html.escape(str(selected_incident.get('description', 'No description provided.')))}</p>
+        <div class="detail-columns">
+          <section>
+            <h4>Notes</h4>
+            <p class="notes-box">{notes or 'No analyst notes yet.'}</p>
+          </section>
+          <section>
+            <h4>Metadata</h4>
+            <ul>{metadata_items}</ul>
+          </section>
+        </div>
+        {update_section}
       </article>"""
     else:
         incident_detail = """
@@ -726,6 +919,18 @@ def soc_management():
     h1 {{ margin: 0; letter-spacing: 0.01em; }}
     h3, h4 {{ margin: 0 0 10px; }}
     .meta {{ color: var(--muted); font-size: 0.95rem; }}
+    .role-pill {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      padding: 6px 10px;
+      color: var(--text);
+      background: rgba(56, 189, 248, 0.12);
+      font-size: 0.9rem;
+    }}
     .kpis {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -761,6 +966,12 @@ def soc_management():
     th {{ color: var(--muted); font-weight: 600; }}
     .links a {{ color: var(--brand); margin-right: 10px; text-decoration: none; }}
     .links a:hover {{ text-decoration: underline; }}
+    .disabled-link {{
+      color: var(--muted);
+      margin-right: 10px;
+      text-decoration: none;
+      cursor: default;
+    }}
     .toolbar {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -843,6 +1054,14 @@ def soc_management():
       min-height: 74px;
     }}
     .update-form {{ margin-top: 14px; }}
+    .read-only-note {{
+      margin-top: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      color: var(--muted);
+      background: rgba(7, 14, 26, 0.22);
+    }}
     .form-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -886,10 +1105,12 @@ def soc_management():
       <div>
         <h1>SOC Management Dashboard</h1>
         <div class="meta">Updated: {html.escape(snap["timestamp_utc"])}</div>
+        <div class="role-pill">Role: <strong>{html.escape(current_role)}</strong></div>
       </div>
       <div class="links">
         <a href="/api/soc-summary">SOC JSON</a>
         <a href="/api/incidents">Incidents JSON</a>
+        {f'<a href="/api/incidents/export.csv{f"?{filter_query}" if filter_query else ""}">Incidents CSV</a>' if can_export else '<span class="disabled-link">Incidents CSV (analyst+)</span>'}
         <a href="/dashboard">Alerts</a>
         <a href="/network-watcher">Watcher</a>
         <a href="/">Home</a>
@@ -898,6 +1119,7 @@ def soc_management():
 
     {f'<div class="banner ok">{html.escape(message)}</div>' if message else ''}
     {f'<div class="banner err">{html.escape(error)}</div>' if error else ''}
+    {'' if can_update else '<div class="banner ok">Read-only mode active. Use an analyst or admin role to update cases or export CSV.</div>'}
 
     <section class="kpis">
       <article class="card"><div class="k">Active Incidents</div><div class="v warn">{snap['active_incidents']}</div></article>
@@ -963,6 +1185,12 @@ def soc_management():
           </label>
           <label>Queue
             <input type="text" name="queue" value="{html.escape(filters['queue'])}" placeholder="soc-triage" />
+          </label>
+          <label>Threat
+            <input type="text" name="threat_type" value="{html.escape(filters['threat_type'])}" placeholder="PORT_SCAN" />
+          </label>
+          <label>Source
+            <input type="text" name="src_ip" value="{html.escape(filters['src_ip'])}" placeholder="10.0.0.5" />
           </label>
           <label>Assignee
             <input type="text" name="assignee" value="{html.escape(filters['assignee'])}" placeholder="alice" />

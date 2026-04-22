@@ -9,11 +9,11 @@
 - [ ] Persistent datastore for alerts/incidents (currently log-based)
 
 ## Phase 2: SOC Operations
-- [ ] Case management model (`open`, `assigned`, `contained`, `resolved`)
-- [ ] Analyst assignment and ownership
-- [ ] MTTR / SLA metrics and trends
-- [ ] Report export (CSV/PDF) for incidents
-- [ ] Role-based access control for SOC views
+- [x] Case management model (`open`, `assigned`, `contained`, `resolved`)
+- [x] Analyst assignment and ownership
+- [x] MTTR / SLA metrics and trends
+- [x] Report export (CSV) for incidents
+- [x] Role-based access control for SOC views
 
 ## Phase 3: Network & Asset Context
 - [ ] Device inventory service (IP/MAC/vendor/OS/risk/open ports)
@@ -42,8 +42,10 @@
 - [ ] White-label and API key management
 
 ## Immediate Next Sprint (Recommended)
-- [ ] Add incident case object + local persistence (`incidents.db`)
-- [ ] Add `/api/incidents` + `/soc-management/incidents` table
+- [x] Add incident case object + local persistence (`incidents.db`)
+- [x] Add `/api/incidents` + `/soc-management` incident table
+- [x] Add CSV incident export endpoint
 - [x] Add alert-to-case auto-link from SOC automation actions
 - [x] Add basic threat-intel enrichment mock endpoint
 - [x] Add one OT detector stub (`modbus_command_spike`) with tests
+- [x] Add role-aware SOC access controls
