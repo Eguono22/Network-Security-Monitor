@@ -372,3 +372,215 @@ class TestApiRoutes:
         assert res.status_code == 400
         payload = res.get_json()
         assert payload["error"] == "missing_indicator"
+
+    def test_api_soc_summary_exposes_mttr_sla_and_trends(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"soc-summary-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        current_now = os.path.getmtime(__file__)
+        incidents_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "incident_id": "INC-SUM1",
+                            "created_at": current_now - 7200,
+                            "updated_at": current_now - 3600,
+                            "status": "resolved",
+                            "status_changed_at": current_now - 3600,
+                            "assigned_at": current_now - 6900,
+                            "contained_at": current_now - 5400,
+                            "resolved_at": current_now - 3600,
+                            "severity": "HIGH",
+                            "queue": "soc-triage",
+                            "threat_type": "PORT_SCAN",
+                            "src_ip": "1.1.1.1",
+                            "metadata": {},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "incident_id": "INC-SUM2",
+                            "created_at": current_now - 72000,
+                            "updated_at": current_now - 1800,
+                            "status": "open",
+                            "status_changed_at": current_now - 72000,
+                            "severity": "CRITICAL",
+                            "queue": "soc-triage",
+                            "threat_type": "DDOS",
+                            "src_ip": "2.2.2.2",
+                            "metadata": {},
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.get("/api/soc-summary")
+            assert res.status_code == 200
+            payload = res.get_json()
+            metrics = payload["metrics"]
+            assert metrics["mttr"]["assignment_avg_seconds"] is not None
+            assert metrics["sla"]["breaches"]["assignment"] >= 1
+            assert metrics["sla"]["evaluated"]["resolution"] == 2
+            assert len(metrics["trends"]["created"]) == 7
+            assert len(metrics["trends"]["resolved"]) == 7
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_soc_management_supports_filters_and_detail_view(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"soc-view-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "incident_id": "INC-SOC1",
+                            "created_at": 1,
+                            "updated_at": 2,
+                            "status": "assigned",
+                            "status_changed_at": 2,
+                            "assigned_at": 2,
+                            "severity": "HIGH",
+                            "queue": "soc-triage",
+                            "threat_type": "PORT_SCAN",
+                            "src_ip": "1.1.1.1",
+                            "assignee": "alice",
+                            "owner": "tier-1",
+                            "description": "Port scan against edge host",
+                            "notes": "Needs review",
+                            "metadata": {"ticket_id": "SOC-17"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "incident_id": "INC-SOC2",
+                            "created_at": 3,
+                            "updated_at": 4,
+                            "status": "resolved",
+                            "status_changed_at": 4,
+                            "resolved_at": 4,
+                            "severity": "CRITICAL",
+                            "queue": "network-incident",
+                            "threat_type": "DDOS",
+                            "src_ip": "2.2.2.2",
+                            "assignee": "bob",
+                            "owner": "tier-2",
+                            "description": "Resolved DDoS spike",
+                            "metadata": {},
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.get("/soc-management?status=assigned&assignee=alice&incident_id=INC-SOC1")
+            assert res.status_code == 200
+            body = res.get_data(as_text=True)
+            assert "Incident Queue Filters" in body
+            assert "Avg Time To Assign" in body
+            assert "INC-SOC1" in body
+            assert "Port scan against edge host" in body
+            assert "SOC-17" in body
+            assert "Needs review" in body
+            assert "INC-SOC2" not in body
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_soc_management_update_form_redirects_and_persists_changes(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"soc-update-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-SOC-UPD",
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "status": "open",
+                    "status_changed_at": 1,
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "1.1.1.1",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        try:
+            client = app.test_client()
+            res = client.post(
+                "/soc-management/incidents/INC-SOC-UPD/update",
+                data={
+                    "status": "contained",
+                    "queue": "tier-2",
+                    "assignee": "alice",
+                    "owner": "lead-analyst",
+                    "notes": "Contained and monitoring.",
+                    "filter_status": "active",
+                    "filter_assignee": "alice",
+                },
+                follow_redirects=False,
+            )
+            assert res.status_code == 303
+            location = res.headers["Location"]
+            assert "/soc-management?" in location
+            assert "incident_id=INC-SOC-UPD" in location
+            assert "status=active" in location
+            assert "assignee=alice" in location
+            assert "message=updated+INC-SOC-UPD" in location
+
+            redirected = client.get(location)
+            assert redirected.status_code == 200
+            body = redirected.get_data(as_text=True)
+            assert "updated INC-SOC-UPD" in body
+            assert "Contained and monitoring." in body
+            assert "lead-analyst" in body
+
+            detail = client.get("/api/incidents/INC-SOC-UPD")
+            payload = detail.get_json()
+            assert payload["status"] == "contained"
+            assert payload["queue"] == "tier-2"
+            assert payload["assignee"] == "alice"
+            assert payload["owner"] == "lead-analyst"
+            assert payload["notes"] == "Contained and monitoring."
+            assert payload["contained_at"] >= payload["created_at"]
+        finally:
+            if prior is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)

@@ -133,3 +133,41 @@ class TestIncidentManager:
             assert [c["incident_id"] for c in active_cases] == [case_a["incident_id"]]
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_compute_metrics_returns_mttr_sla_and_trends(self):
+        tmp_root = Path(".test_tmp") / f"incident-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        path = tmp_root / "incidents.jsonl"
+        now = time.time()
+        day = 24 * 60 * 60
+        path.write_text(
+            "\n".join(
+                [
+                    '{"incident_id":"INC-M1","created_at":'
+                    f"{now - (2 * day)}"
+                    ',"updated_at":1,"status":"resolved","status_changed_at":1,'
+                    f'"assigned_at":{now - (2 * day) + 300},"contained_at":{now - (2 * day) + 1800},"resolved_at":{now - (2 * day) + 3600},'
+                    '"severity":"HIGH","queue":"soc-triage","threat_type":"PORT_SCAN","src_ip":"1.1.1.1","metadata":{}}',
+                    '{"incident_id":"INC-M2","created_at":'
+                    f"{now - 7200}"
+                    ',"updated_at":1,"status":"open","status_changed_at":1,'
+                    '"severity":"CRITICAL","queue":"soc-triage","threat_type":"DDOS","src_ip":"2.2.2.2","metadata":{}}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            manager = IncidentManager(str(path))
+            metrics = manager.compute_metrics(now=now)
+            assert metrics["mttr"]["assignment_avg_seconds"] == pytest.approx((300 + 7200) / 2)
+            assert metrics["mttr"]["containment_avg_seconds"] == pytest.approx((1800 + 7200) / 2)
+            assert metrics["mttr"]["resolution_avg_seconds"] == pytest.approx((3600 + 7200) / 2)
+            assert metrics["sla"]["breaches"]["assignment"] == 1
+            assert metrics["sla"]["breaches"]["containment"] == 1
+            assert metrics["sla"]["breaches"]["resolution"] == 0
+            assert metrics["sla"]["evaluated"]["assignment"] == 2
+            assert len(metrics["trends"]["created"]) == 7
+            assert len(metrics["trends"]["resolved"]) == 7
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

@@ -6,8 +6,9 @@ import html
 import os
 from collections import Counter
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, redirect, request
 
 from network_security_monitor.incident_manager import (
     ACTIVE_INCIDENT_STATUSES,
@@ -40,6 +41,67 @@ def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
 def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
     manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
     return manager.list_cases(limit=limit)
+
+
+def _incident_manager() -> IncidentManager:
+    return IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+
+
+def _incident_filter_args() -> dict[str, str]:
+    return {
+        "status": request.args.get("status", "").strip(),
+        "severity": request.args.get("severity", "").strip(),
+        "queue": request.args.get("queue", "").strip(),
+        "assignee": request.args.get("assignee", "").strip(),
+        "owner": request.args.get("owner", "").strip(),
+    }
+
+
+def _build_query(params: dict[str, str]) -> str:
+    filtered = {key: value for key, value in params.items() if value not in ("", None)}
+    return urlencode(filtered)
+
+
+def _isoish_to_display(value) -> str:
+    if not value:
+        return "n/a"
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (TypeError, ValueError, OSError):
+        return html.escape(str(value))
+
+
+def _render_incident_detail_list(items: dict) -> str:
+    if not items:
+        return "<li>No metadata</li>"
+    return "".join(
+        f"<li><strong>{html.escape(str(key))}</strong>: {html.escape(str(value))}</li>"
+        for key, value in sorted(items.items())
+    )
+
+
+def _selected_value(current: str, option: str) -> str:
+    return " selected" if current == option else ""
+
+
+def _duration_to_display(value) -> str:
+    if value in (None, ""):
+        return "n/a"
+    try:
+        seconds = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return html.escape(str(value))
+    if seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m"
+    hours = seconds / 3600
+    return f"{hours:.1f}h"
+
+
+def _trend_summary(trend: list[dict]) -> str:
+    if not trend:
+        return "n/a"
+    return " | ".join(f"{item['date'][5:]}:{item['count']}" for item in trend)
 
 
 def _network_watcher_summary() -> dict:
@@ -75,7 +137,9 @@ def _network_watcher_summary() -> dict:
 def _soc_management_snapshot() -> dict:
     alerts = _load_recent_alerts()
     actions = _load_soc_actions()
-    incidents = _load_incidents()
+    manager = _incident_manager()
+    incidents = manager.list_cases(limit=1000)
+    metrics = manager.compute_metrics(limit=1000)
     open_incidents = sum(1 for i in incidents if i.get("status") == "open")
     active_incidents = sum(
         1 for i in incidents if str(i.get("status", "open")).lower() in ACTIVE_INCIDENT_STATUSES
@@ -101,6 +165,7 @@ def _soc_management_snapshot() -> dict:
         "recent_incidents": len(incidents),
         "threat_queue": threat_queue,
         "analyst_queue": analyst_queue,
+        "metrics": metrics,
     }
 
 
@@ -271,7 +336,7 @@ def api_threat_intel():
 @app.get("/api/incidents")
 def api_incidents():
     limit = _request_limit()
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    manager = _incident_manager()
     try:
         incidents = manager.list_cases(
             limit=limit,
@@ -290,7 +355,7 @@ def api_incidents():
 
 @app.get("/api/incidents/<incident_id>")
 def api_incident_detail(incident_id: str):
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    manager = _incident_manager()
     incident = manager.get_case(incident_id)
     if incident is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
@@ -299,7 +364,7 @@ def api_incident_detail(incident_id: str):
 
 @app.patch("/api/incidents/<incident_id>")
 def api_incident_update(incident_id: str):
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    manager = _incident_manager()
     payload = request.get_json(silent=True) or {}
     allowed = {
         "status",
@@ -317,6 +382,48 @@ def api_incident_update(incident_id: str):
     if updated is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
     return jsonify(updated)
+
+
+@app.post("/soc-management/incidents/<incident_id>/update")
+def soc_management_incident_update(incident_id: str):
+    manager = _incident_manager()
+    filters = {
+        "status": request.form.get("filter_status", "").strip(),
+        "severity": request.form.get("filter_severity", "").strip(),
+        "queue": request.form.get("filter_queue", "").strip(),
+        "assignee": request.form.get("filter_assignee", "").strip(),
+        "owner": request.form.get("filter_owner", "").strip(),
+    }
+    selected_id = request.form.get("incident_id", incident_id).strip() or incident_id
+    allowed = ("status", "queue", "assignee", "owner", "notes")
+    changes = {key: request.form.get(key, "").strip() for key in allowed if request.form.get(key) is not None}
+    changes = {key: value for key, value in changes.items() if value}
+
+    message = ""
+    error = ""
+    try:
+        updated = manager.update_case(incident_id, **changes)
+    except IncidentValidationError as exc:
+        updated = None
+        error = str(exc)
+    if updated is None and not error:
+        error = f"incident not found: {incident_id}"
+    if updated is not None:
+        selected_id = updated["incident_id"]
+        message = f"updated {updated['incident_id']}"
+
+    query = _build_query(
+        {
+            **filters,
+            "incident_id": selected_id,
+            "message": message,
+            "error": error,
+        }
+    )
+    location = "/soc-management"
+    if query:
+        location = f"{location}?{query}"
+    return redirect(location, code=303)
 
 
 def _request_limit(default: int = _MAX_RECENT) -> int:
@@ -459,7 +566,21 @@ def network_watcher():
 @app.get("/soc-management")
 def soc_management():
     snap = _soc_management_snapshot()
-    incidents = _load_incidents(limit=25)
+    manager = _incident_manager()
+    metrics = snap.get("metrics", {})
+    mttr = metrics.get("mttr", {})
+    sla = metrics.get("sla", {})
+    trends = metrics.get("trends", {})
+    filters = _incident_filter_args()
+    selected_id = request.args.get("incident_id", "").strip()
+    message = request.args.get("message", "").strip()
+    error = request.args.get("error", "").strip()
+    incidents = manager.list_cases(limit=100, **filters)
+    selected_incident = manager.get_case(selected_id) if selected_id else None
+    if selected_incident is None and incidents:
+        selected_incident = incidents[-1]
+        selected_id = str(selected_incident.get("incident_id", ""))
+
     threat_items = "".join(
         f"<tr><td>{html.escape(str(name))}</td><td>{count}</td></tr>"
         for name, count in snap["threat_queue"]
@@ -470,15 +591,95 @@ def soc_management():
     ) or "<tr><td colspan='2'>No automation queue data</td></tr>"
     incident_items = "".join(
         "<tr>"
-        f"<td>{html.escape(str(i.get('incident_id', 'n/a')))}</td>"
+        f"<td><a href=\"/soc-management?{_build_query({**filters, 'incident_id': str(i.get('incident_id', ''))})}\">{html.escape(str(i.get('incident_id', 'n/a')))}</a></td>"
         f"<td>{html.escape(str(i.get('severity', 'UNKNOWN')))}</td>"
         f"<td>{html.escape(str(i.get('status', 'open')))}</td>"
         f"<td>{html.escape(str(i.get('queue', 'soc-triage')))}</td>"
+        f"<td>{html.escape(str(i.get('assignee', 'unassigned') or 'unassigned'))}</td>"
         f"<td>{html.escape(str(i.get('src_ip', 'n/a')))}</td>"
         f"<td>{html.escape(str(i.get('threat_type', 'UNKNOWN')))}</td>"
         "</tr>"
         for i in reversed(incidents[-15:])
-    ) or "<tr><td colspan='6'>No incidents created yet.</td></tr>"
+    ) or "<tr><td colspan='7'>No incidents matched the current filters.</td></tr>"
+    active_filter_count = sum(1 for value in filters.values() if value)
+    filter_query = _build_query(filters)
+
+    incident_detail = ""
+    if selected_incident is not None:
+        metadata_items = _render_incident_detail_list(selected_incident.get("metadata") or {})
+        notes = html.escape(str(selected_incident.get("notes", "") or ""))
+        incident_detail = f"""
+      <article class="card detail-card">
+        <div class="section-title">Incident Detail</div>
+        <h3>{html.escape(str(selected_incident.get('incident_id', 'n/a')))}</h3>
+        <div class="detail-grid">
+          <div><span>Status</span><strong>{html.escape(str(selected_incident.get('status', 'open')))}</strong></div>
+          <div><span>Severity</span><strong>{html.escape(str(selected_incident.get('severity', 'UNKNOWN')))}</strong></div>
+          <div><span>Queue</span><strong>{html.escape(str(selected_incident.get('queue', 'soc-triage')))}</strong></div>
+          <div><span>Assignee</span><strong>{html.escape(str(selected_incident.get('assignee', 'unassigned') or 'unassigned'))}</strong></div>
+          <div><span>Owner</span><strong>{html.escape(str(selected_incident.get('owner', 'unassigned') or 'unassigned'))}</strong></div>
+          <div><span>Source</span><strong>{html.escape(str(selected_incident.get('src_ip', 'n/a')))}</strong></div>
+          <div><span>Created</span><strong>{_isoish_to_display(selected_incident.get('created_at'))}</strong></div>
+          <div><span>Status Changed</span><strong>{_isoish_to_display(selected_incident.get('status_changed_at'))}</strong></div>
+          <div><span>Assigned</span><strong>{_isoish_to_display(selected_incident.get('assigned_at'))}</strong></div>
+          <div><span>Contained</span><strong>{_isoish_to_display(selected_incident.get('contained_at'))}</strong></div>
+          <div><span>Resolved</span><strong>{_isoish_to_display(selected_incident.get('resolved_at'))}</strong></div>
+          <div><span>Threat</span><strong>{html.escape(str(selected_incident.get('threat_type', 'UNKNOWN')))}</strong></div>
+        </div>
+        <p class="detail-description">{html.escape(str(selected_incident.get('description', 'No description provided.')))}</p>
+        <div class="detail-columns">
+          <section>
+            <h4>Notes</h4>
+            <p class="notes-box">{notes or 'No analyst notes yet.'}</p>
+          </section>
+          <section>
+            <h4>Metadata</h4>
+            <ul>{metadata_items}</ul>
+          </section>
+        </div>
+        <form method="post" action="/soc-management/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}/update" class="update-form">
+          <input type="hidden" name="incident_id" value="{html.escape(str(selected_incident.get('incident_id', '')))}" />
+          <input type="hidden" name="filter_status" value="{html.escape(filters['status'])}" />
+          <input type="hidden" name="filter_severity" value="{html.escape(filters['severity'])}" />
+          <input type="hidden" name="filter_queue" value="{html.escape(filters['queue'])}" />
+          <input type="hidden" name="filter_assignee" value="{html.escape(filters['assignee'])}" />
+          <input type="hidden" name="filter_owner" value="{html.escape(filters['owner'])}" />
+          <div class="section-title">Update Incident</div>
+          <div class="form-grid">
+            <label>Status
+              <select name="status">
+                <option value="">No change</option>
+                <option value="open"{_selected_value(str(selected_incident.get('status', 'open')), 'open')}>open</option>
+                <option value="assigned"{_selected_value(str(selected_incident.get('status', 'open')), 'assigned')}>assigned</option>
+                <option value="contained"{_selected_value(str(selected_incident.get('status', 'open')), 'contained')}>contained</option>
+                <option value="resolved"{_selected_value(str(selected_incident.get('status', 'open')), 'resolved')}>resolved</option>
+              </select>
+            </label>
+            <label>Queue
+              <input type="text" name="queue" value="{html.escape(str(selected_incident.get('queue', 'soc-triage')))}" />
+            </label>
+            <label>Assignee
+              <input type="text" name="assignee" value="{html.escape(str(selected_incident.get('assignee', '') or ''))}" />
+            </label>
+            <label>Owner
+              <input type="text" name="owner" value="{html.escape(str(selected_incident.get('owner', '') or ''))}" />
+            </label>
+          </div>
+          <label>Notes
+            <textarea name="notes" rows="4">{notes}</textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit">Save Incident Update</button>
+            <a href="/api/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}">Open JSON</a>
+          </div>
+        </form>
+      </article>"""
+    else:
+        incident_detail = """
+      <article class="card detail-card">
+        <div class="section-title">Incident Detail</div>
+        <p>Select an incident from the table to inspect it and apply updates.</p>
+      </article>"""
 
     page = f"""<!doctype html>
 <html lang="en">
@@ -514,7 +715,16 @@ def soc_management():
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
       margin-bottom: 14px;
     }}
+    .banner {{
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+    }}
+    .banner.ok {{ background: rgba(45, 212, 191, 0.12); color: var(--good); }}
+    .banner.err {{ background: rgba(251, 113, 133, 0.12); color: #fecdd3; }}
     h1 {{ margin: 0; letter-spacing: 0.01em; }}
+    h3, h4 {{ margin: 0 0 10px; }}
     .meta {{ color: var(--muted); font-size: 0.95rem; }}
     .kpis {{
       display: grid;
@@ -533,16 +743,141 @@ def soc_management():
     .v.good {{ color: var(--good); }}
     .v.warn {{ color: var(--warn); }}
     .v.bad {{ color: var(--bad); }}
+    .v.info {{ color: var(--brand); }}
     .grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 12px;
+    }}
+    .workflow-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+      gap: 12px;
+      margin-top: 12px;
+      align-items: start;
     }}
     table {{ width: 100%; border-collapse: collapse; }}
     th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }}
     th {{ color: var(--muted); font-weight: 600; }}
     .links a {{ color: var(--brand); margin-right: 10px; text-decoration: none; }}
     .links a:hover {{ text-decoration: underline; }}
+    .toolbar {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }}
+    .toolbar label, .update-form label {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }}
+    .toolbar input, .toolbar select, .update-form input, .update-form select, .update-form textarea {{
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(7, 14, 26, 0.35);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }}
+    .toolbar-actions, .form-actions {{
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }}
+    button, .button-link {{
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, #0891b2, #0ea5a4);
+      color: white;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+    }}
+    .button-link.secondary {{
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--text);
+    }}
+    .section-title {{
+      color: var(--brand);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.78rem;
+      margin-bottom: 10px;
+    }}
+    .detail-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .detail-grid span {{
+      display: block;
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }}
+    .detail-description {{ color: var(--text); }}
+    .detail-columns {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }}
+    .detail-columns ul {{ margin: 0; padding-left: 18px; color: var(--muted); }}
+    .notes-box {{
+      white-space: pre-wrap;
+      background: rgba(7, 14, 26, 0.35);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-height: 74px;
+    }}
+    .update-form {{ margin-top: 14px; }}
+    .form-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }}
+    .detail-card {{ min-height: 100%; }}
+    .table-meta {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }}
+    .metrics-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }}
+    .metric-list {{
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }}
+    .trend-text {{
+      color: var(--muted);
+      line-height: 1.5;
+      word-break: break-word;
+    }}
+    @media (max-width: 900px) {{
+      .workflow-grid {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>
@@ -561,12 +896,87 @@ def soc_management():
       </div>
     </section>
 
+    {f'<div class="banner ok">{html.escape(message)}</div>' if message else ''}
+    {f'<div class="banner err">{html.escape(error)}</div>' if error else ''}
+
     <section class="kpis">
       <article class="card"><div class="k">Active Incidents</div><div class="v warn">{snap['active_incidents']}</div></article>
       <article class="card"><div class="k">Critical Incidents</div><div class="v bad">{snap['critical_incidents']}</div></article>
       <article class="card"><div class="k">Automation Actions</div><div class="v good">{snap['automation_actions']}</div></article>
       <article class="card"><div class="k">Recent Alerts</div><div class="v">{snap['recent_alerts']}</div></article>
       <article class="card"><div class="k">Recent Cases</div><div class="v">{snap['recent_incidents']}</div></article>
+    </section>
+
+    <section class="metrics-grid">
+      <article class="card">
+        <div class="k">Avg Time To Assign</div>
+        <div class="v info">{_duration_to_display(mttr.get('assignment_avg_seconds'))}</div>
+      </article>
+      <article class="card">
+        <div class="k">Avg Time To Contain</div>
+        <div class="v warn">{_duration_to_display(mttr.get('containment_avg_seconds'))}</div>
+      </article>
+      <article class="card">
+        <div class="k">Avg Time To Resolve</div>
+        <div class="v">{_duration_to_display(mttr.get('resolution_avg_seconds'))}</div>
+      </article>
+      <article class="card">
+        <div class="k">SLA Breaches</div>
+        <ul class="metric-list">
+          <li>Assign: {sla.get('breaches', {}).get('assignment', 0)} / {sla.get('evaluated', {}).get('assignment', 0)}</li>
+          <li>Contain: {sla.get('breaches', {}).get('containment', 0)} / {sla.get('evaluated', {}).get('containment', 0)}</li>
+          <li>Resolve: {sla.get('breaches', {}).get('resolution', 0)} / {sla.get('evaluated', {}).get('resolution', 0)}</li>
+        </ul>
+      </article>
+      <article class="card">
+        <div class="k">Created Trend (7d)</div>
+        <p class="trend-text">{html.escape(_trend_summary(trends.get('created', [])))}</p>
+      </article>
+      <article class="card">
+        <div class="k">Resolved Trend (7d)</div>
+        <p class="trend-text">{html.escape(_trend_summary(trends.get('resolved', [])))}</p>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Incident Queue Filters</div>
+      <form method="get" action="/soc-management">
+        <div class="toolbar">
+          <label>Status
+            <select name="status">
+              <option value="">All statuses</option>
+              <option value="active"{_selected_value(filters['status'], 'active')}>active</option>
+              <option value="open"{_selected_value(filters['status'], 'open')}>open</option>
+              <option value="assigned"{_selected_value(filters['status'], 'assigned')}>assigned</option>
+              <option value="contained"{_selected_value(filters['status'], 'contained')}>contained</option>
+              <option value="resolved"{_selected_value(filters['status'], 'resolved')}>resolved</option>
+            </select>
+          </label>
+          <label>Severity
+            <select name="severity">
+              <option value="">All severities</option>
+              <option value="LOW"{_selected_value(filters['severity'], 'LOW')}>LOW</option>
+              <option value="MEDIUM"{_selected_value(filters['severity'], 'MEDIUM')}>MEDIUM</option>
+              <option value="HIGH"{_selected_value(filters['severity'], 'HIGH')}>HIGH</option>
+              <option value="CRITICAL"{_selected_value(filters['severity'], 'CRITICAL')}>CRITICAL</option>
+            </select>
+          </label>
+          <label>Queue
+            <input type="text" name="queue" value="{html.escape(filters['queue'])}" placeholder="soc-triage" />
+          </label>
+          <label>Assignee
+            <input type="text" name="assignee" value="{html.escape(filters['assignee'])}" placeholder="alice" />
+          </label>
+          <label>Owner
+            <input type="text" name="owner" value="{html.escape(filters['owner'])}" placeholder="tier-2" />
+          </label>
+        </div>
+        <div class="toolbar-actions">
+          <button type="submit">Apply Filters</button>
+          <a class="button-link secondary" href="/soc-management">Clear Filters</a>
+          <span>{len(incidents)} incidents shown{f' with {active_filter_count} active filters' if active_filter_count else ''}</span>
+        </div>
+      </form>
     </section>
 
     <section class="grid">
@@ -584,13 +994,20 @@ def soc_management():
           <tbody>{analyst_items}</tbody>
         </table>
       </article>
+    </section>
+
+    <section class="workflow-grid">
       <article class="card">
-        <h3>Incident Cases</h3>
+        <div class="table-meta">
+          <h3>Incident Cases</h3>
+          <span>{'Filtered view' if filter_query else 'Latest view'}</span>
+        </div>
         <table>
-          <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Queue</th><th>Source</th><th>Threat</th></tr></thead>
+          <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Queue</th><th>Assignee</th><th>Source</th><th>Threat</th></tr></thead>
           <tbody>{incident_items}</tbody>
         </table>
       </article>
+      {incident_detail}
     </section>
   </main>
 </body>
