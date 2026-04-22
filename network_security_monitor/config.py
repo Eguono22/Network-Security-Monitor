@@ -157,6 +157,7 @@ class Config:
     # API/UI role defaults. Existing local behavior stays permissive unless this
     # is overridden by environment or an upstream proxy injects X-NSM-Role.
     API_DEFAULT_ROLE: str = "admin"
+    DEVICE_INVENTORY_FILE: str = ""
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -210,6 +211,7 @@ class Config:
             self.SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL,
         )
         self.API_DEFAULT_ROLE = os.getenv("NSM_API_DEFAULT_ROLE", self.API_DEFAULT_ROLE).strip().lower()
+        self.DEVICE_INVENTORY_FILE = os.getenv("NSM_DEVICE_INVENTORY_FILE", self.DEVICE_INVENTORY_FILE)
         trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
         if trusted_sources.strip():
             self.PORT_SCAN_TRUSTED_SOURCES = {

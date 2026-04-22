@@ -18,6 +18,7 @@ from network_security_monitor.incident_manager import (
     IncidentManager,
     IncidentValidationError,
 )
+from network_security_monitor.device_inventory import DeviceInventoryService
 from network_security_monitor.storage import AlertRepository, JsonlStore
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
@@ -136,6 +137,13 @@ def _incident_manager() -> IncidentManager:
     return IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
 
 
+def _inventory_service() -> DeviceInventoryService:
+    inventory_path = os.getenv("NSM_DEVICE_INVENTORY_FILE", "").strip()
+    if not inventory_path:
+        inventory_path = Config().DEVICE_INVENTORY_FILE
+    return DeviceInventoryService(inventory_path)
+
+
 def _incident_filter_args() -> dict[str, str]:
     return {
         "status": request.args.get("status", "").strip(),
@@ -205,6 +213,16 @@ def _incident_csv_response(incidents: list[dict]) -> Response:
     )
 
 
+def _load_devices(limit: int = _MAX_RECENT, *, risk_level: str = "", query: str = "") -> list[dict]:
+    return _inventory_service().list_devices(
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+        limit=limit,
+        risk_level=risk_level,
+        query=query,
+    )
+
+
 def _isoish_to_display(value) -> str:
     if not value:
         return "n/a"
@@ -220,6 +238,30 @@ def _render_incident_detail_list(items: dict) -> str:
     return "".join(
         f"<li><strong>{html.escape(str(key))}</strong>: {html.escape(str(value))}</li>"
         for key, value in sorted(items.items())
+    )
+
+
+def _render_asset_summary(asset: dict | None) -> str:
+    if not asset:
+        return "<p class='asset-empty'>No asset context found for this source IP yet.</p>"
+    open_ports = ", ".join(str(port) for port in asset.get("open_ports", [])) or "none"
+    threat_types = ", ".join(asset.get("threat_types", [])) or "none"
+    tags = ", ".join(asset.get("tags", [])) or "none"
+    return (
+        "<div class='asset-grid'>"
+        f"<div><span>IP</span><strong>{html.escape(str(asset.get('ip', 'n/a')))}</strong></div>"
+        f"<div><span>Hostname</span><strong>{html.escape(str(asset.get('hostname', '') or 'unknown'))}</strong></div>"
+        f"<div><span>Vendor</span><strong>{html.escape(str(asset.get('vendor', '') or 'unknown'))}</strong></div>"
+        f"<div><span>OS</span><strong>{html.escape(str(asset.get('os', '') or 'unknown'))}</strong></div>"
+        f"<div><span>Risk</span><strong>{html.escape(str(asset.get('risk_level', 'low')))} ({int(asset.get('risk_score', 0))})</strong></div>"
+        f"<div><span>Last Seen</span><strong>{html.escape(str(asset.get('last_seen', '') or 'n/a'))}</strong></div>"
+        "</div>"
+        "<ul class='asset-list'>"
+        f"<li><strong>Open ports</strong>: {html.escape(open_ports)}</li>"
+        f"<li><strong>Threats</strong>: {html.escape(threat_types)}</li>"
+        f"<li><strong>Tags</strong>: {html.escape(tags)}</li>"
+        f"<li><strong>Incidents</strong>: {int(asset.get('incident_count', 0))} | <strong>Alerts</strong>: {int(asset.get('alert_count', 0))}</li>"
+        "</ul>"
     )
 
 
@@ -426,6 +468,10 @@ def root():
         <strong>Threat Intel</strong>
         <p>Enrich an indicator at <code>/api/threat-intel?indicator=1.2.3.4</code>.</p>
       </section>
+      <section class="item">
+        <strong>Device Inventory</strong>
+        <p>Inspect asset context at <code>/api/devices</code>.</p>
+      </section>
     </div>
   </main>
 </body>
@@ -514,7 +560,41 @@ def api_incident_detail(incident_id: str):
     incident = manager.get_case(incident_id)
     if incident is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
-    return jsonify(incident)
+    enriched = _inventory_service().enrich_incident(
+        incident,
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+    )
+    return jsonify(enriched)
+
+
+@app.get("/api/devices")
+def api_devices():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    limit = _request_limit()
+    devices = _load_devices(
+        limit=limit,
+        risk_level=request.args.get("risk_level", ""),
+        query=request.args.get("q", ""),
+    )
+    return jsonify({"count": len(devices), "devices": devices})
+
+
+@app.get("/api/devices/<ip>")
+def api_device_detail(ip: str):
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    device = _inventory_service().get_device(
+        ip,
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+    )
+    if device is None:
+        return jsonify({"error": "device_not_found", "ip": ip}), 404
+    return jsonify(device)
 
 
 @app.patch("/api/incidents/<incident_id>")
@@ -743,6 +823,7 @@ def soc_management():
         return denial
     snap = _soc_management_snapshot()
     manager = _incident_manager()
+    inventory = _inventory_service()
     metrics = snap.get("metrics", {})
     mttr = metrics.get("mttr", {})
     sla = metrics.get("sla", {})
@@ -786,6 +867,12 @@ def soc_management():
     if selected_incident is not None:
         metadata_items = _render_incident_detail_list(selected_incident.get("metadata") or {})
         notes = html.escape(str(selected_incident.get("notes", "") or ""))
+        source_asset = inventory.get_device(
+            str(selected_incident.get("src_ip", "")).strip(),
+            alerts=_load_recent_alerts(limit=1000),
+            incidents=_load_incidents(limit=1000),
+        )
+        asset_summary = _render_asset_summary(source_asset)
         update_section = ""
         if can_update:
             update_section = f"""
@@ -863,6 +950,10 @@ def soc_management():
           <section>
             <h4>Metadata</h4>
             <ul>{metadata_items}</ul>
+          </section>
+          <section>
+            <h4>Source Asset</h4>
+            {asset_summary}
           </section>
         </div>
         {update_section}
@@ -1045,6 +1136,29 @@ def soc_management():
       margin: 12px 0;
     }}
     .detail-columns ul {{ margin: 0; padding-left: 18px; color: var(--muted); }}
+    .asset-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .asset-grid span {{
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }}
+    .asset-list {{
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }}
+    .asset-empty {{
+      color: var(--muted);
+      margin: 0;
+    }}
     .notes-box {{
       white-space: pre-wrap;
       background: rgba(7, 14, 26, 0.35);
@@ -1111,6 +1225,7 @@ def soc_management():
         <a href="/api/soc-summary">SOC JSON</a>
         <a href="/api/incidents">Incidents JSON</a>
         {f'<a href="/api/incidents/export.csv{f"?{filter_query}" if filter_query else ""}">Incidents CSV</a>' if can_export else '<span class="disabled-link">Incidents CSV (analyst+)</span>'}
+        <a href="/api/devices">Devices JSON</a>
         <a href="/dashboard">Alerts</a>
         <a href="/network-watcher">Watcher</a>
         <a href="/">Home</a>

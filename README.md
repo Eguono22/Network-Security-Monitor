@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-144%20passed-2ea44f)
+![Tests](https://img.shields.io/badge/tests-148%20passed-2ea44f)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -130,6 +130,8 @@ Available routes:
 - `GET /api/incidents`
 - `GET /api/incidents/export.csv`
 - `GET /api/incidents/<incident_id>`
+- `GET /api/devices`
+- `GET /api/devices/<ip>`
 - `PATCH /api/incidents/<incident_id>`
 
 Note: live packet capture is not available in Vercel's serverless runtime. Use
@@ -144,6 +146,12 @@ SOC access control:
 - Override the effective role per request with the `X-NSM-Role` header
 - `viewer` is read-only for SOC views
 - `analyst` and `admin` can update incidents and export CSV
+
+Device inventory:
+
+- Set `NSM_DEVICE_INVENTORY_FILE` to a JSON file with seeded device records
+- `GET /api/devices` merges seeded assets with observed alert and incident context
+- Incident detail responses include `source_asset` enrichment when the source IP is known
 
 ---
 
@@ -230,6 +238,12 @@ Example CSV export request:
 
 ```text
 GET /api/incidents/export.csv?status=active&assignee=alice
+```
+
+Example device inventory request:
+
+```text
+GET /api/devices?risk_level=high&q=server
 ```
 
 Example threat-intel request:
@@ -498,7 +512,7 @@ On Windows with the project virtual environment:
 
 Current verified result in this repository:
 
-- `144 passed`
+- `148 passed`
 
 ---
 
@@ -508,7 +522,7 @@ Near-term project direction for `SentinelNet`:
 
 - Complete persistent storage beyond log-backed files for alerts and incidents
 - Expand SOC operations with deeper analyst workflow and richer authorization policy
-- Add asset and network context such as inventory, topology, and per-segment baselines
+- Add deeper asset and network context such as topology, baselines, and unauthorized device lifecycle
 - Integrate threat intelligence enrichment sources and IOC management
 - Introduce OT-focused visibility starting with protocol-aware detections
 - Explore multi-tenant controls for MSP-style operation

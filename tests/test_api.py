@@ -89,6 +89,85 @@ class TestApiRoutes:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_api_devices_returns_inventory_with_seed_context(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-devices-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        seed_path = tmp_root / "devices.json"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-DEV1",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "CRITICAL",
+                    "queue": "soc-triage",
+                    "threat_type": "MALICIOUS_IP",
+                    "src_ip": "10.0.0.5",
+                    "dst_port": 443,
+                    "metadata": {"tags": ["production"]},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        seed_path.write_text(
+            json.dumps(
+                {
+                    "devices": [
+                        {
+                            "ip": "10.0.0.5",
+                            "hostname": "db-01",
+                            "vendor": "Dell",
+                            "os": "Ubuntu",
+                            "open_ports": [22],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        prior_alert_log = os.environ.get("NSM_ALERT_LOG_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+        os.environ["NSM_ALERT_LOG_FILE"] = str(tmp_root / "alerts.log")
+        try:
+            client = app.test_client()
+            res = client.get("/api/devices?q=10.0.0.5", headers={"X-NSM-Role": "viewer"})
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["count"] == 1
+            device = payload["devices"][0]
+            assert device["ip"] == "10.0.0.5"
+            assert device["hostname"] == "db-01"
+            assert device["vendor"] == "Dell"
+            assert device["risk_level"] in {"high", "critical"}
+
+            detail = client.get("/api/devices/10.0.0.5", headers={"X-NSM-Role": "viewer"})
+            assert detail.status_code == 200
+            detail_payload = detail.get_json()
+            assert detail_payload["open_ports"] == [22, 443]
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_inventory is None:
+                os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
+            else:
+                os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_alert_log is None:
+                os.environ.pop("NSM_ALERT_LOG_FILE", None)
+            else:
+                os.environ["NSM_ALERT_LOG_FILE"] = prior_alert_log
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
     def test_api_incidents_supports_filters(self):
         pytest.importorskip("flask")
         from api.index import app
@@ -337,6 +416,82 @@ class TestApiRoutes:
                 os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
             else:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incident_detail_includes_source_asset_context(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incident-device-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        alerts_path = tmp_root / "alerts.jsonl"
+        seed_path = tmp_root / "devices.json"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-ASSET1",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "10.0.0.8",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        alerts_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": 10,
+                    "severity": "HIGH",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "10.0.0.8",
+                    "description": "Port scan detected",
+                    "metadata": {"hostname": "web-01", "os": "Windows Server"},
+                    "incident_ids": ["INC-ASSET1"],
+                    "raw": "raw",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        seed_path.write_text(
+            json.dumps({"devices": [{"ip": "10.0.0.8", "vendor": "HP"}]}),
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
+        prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+        os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
+        os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+        try:
+            client = app.test_client()
+            res = client.get("/api/incidents/INC-ASSET1", headers={"X-NSM-Role": "viewer"})
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["source_asset"]["ip"] == "10.0.0.8"
+            assert payload["source_asset"]["vendor"] == "HP"
+            assert payload["source_asset"]["hostname"] == "web-01"
+            assert payload["source_asset"]["os"] == "Windows Server"
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_alerts is None:
+                os.environ.pop("NSM_ALERTS_DATA_FILE", None)
+            else:
+                os.environ["NSM_ALERTS_DATA_FILE"] = prior_alerts
+            if prior_inventory is None:
+                os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
+            else:
+                os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
             shutil.rmtree(tmp_root, ignore_errors=True)
 
     def test_api_incident_update_denies_viewer_role(self):
