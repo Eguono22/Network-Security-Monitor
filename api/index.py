@@ -23,6 +23,7 @@ from network_security_monitor.unauthorized_devices import (
     UnauthorizedDeviceManager,
     UnauthorizedDeviceValidationError,
 )
+from network_security_monitor.network_topology import NetworkTopologyService
 from network_security_monitor.storage import AlertRepository, JsonlStore
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
@@ -155,6 +156,13 @@ def _unauthorized_device_manager() -> UnauthorizedDeviceManager:
     return UnauthorizedDeviceManager(path)
 
 
+def _topology_service() -> NetworkTopologyService:
+    path = os.getenv("NSM_TOPOLOGY_FILE", "").strip()
+    if not path:
+        path = Config().TOPOLOGY_FILE
+    return NetworkTopologyService(path)
+
+
 def _incident_filter_args() -> dict[str, str]:
     return {
         "status": request.args.get("status", "").strip(),
@@ -245,6 +253,18 @@ def _load_unauthorized_devices(limit: int = _MAX_RECENT, *, status: str = "", qu
     )
 
 
+def _load_topology(limit: int = _MAX_RECENT) -> dict:
+    devices = _load_devices(limit=1000)
+    incidents = _load_incidents(limit=1000)
+    alerts = _load_recent_alerts(limit=1000)
+    return _topology_service().summarize(
+        devices=devices,
+        alerts=alerts,
+        incidents=incidents,
+        limit=limit,
+    )
+
+
 def _isoish_to_display(value) -> str:
     if not value:
         return "n/a"
@@ -297,6 +317,19 @@ def _render_unauthorized_summary(finding: dict | None) -> str:
         f"<li><strong>Owner</strong>: {html.escape(str(finding.get('owner', '') or 'unassigned'))}</li>"
         f"<li><strong>Queue</strong>: {html.escape(str(finding.get('queue', 'asset-security')))}</li>"
         f"<li><strong>Notes</strong>: {html.escape(str(finding.get('notes', '') or 'none'))}</li>"
+        "</ul>"
+    )
+
+
+def _render_zone_summary(zone_context: dict | None) -> str:
+    if not zone_context:
+        return "<p class='asset-empty'>No zone context available for this incident yet.</p>"
+    return (
+        "<ul class='asset-list'>"
+        f"<li><strong>Source zone</strong>: {html.escape(str(zone_context.get('src_zone', '') or 'unknown'))}</li>"
+        f"<li><strong>Destination zone</strong>: {html.escape(str(zone_context.get('dst_zone', '') or 'unknown'))}</li>"
+        f"<li><strong>Path status</strong>: {html.escape(str(zone_context.get('path_status', '') or 'unknown'))}</li>"
+        f"<li><strong>Policy</strong>: {html.escape(str(zone_context.get('policy_name', '') or 'none'))}</li>"
         "</ul>"
     )
 
@@ -363,6 +396,12 @@ def _soc_management_snapshot() -> dict:
     unauthorized_manager = _unauthorized_device_manager()
     incidents = manager.list_cases(limit=1000)
     metrics = manager.compute_metrics(limit=1000)
+    topology = _topology_service().summarize(
+        devices=inventory.list_devices(alerts=alerts, incidents=incidents, limit=1000),
+        alerts=alerts,
+        incidents=incidents,
+        limit=1000,
+    )
     unauthorized_devices = unauthorized_manager.list_findings(
         inventory=inventory,
         alerts=alerts,
@@ -399,6 +438,8 @@ def _soc_management_snapshot() -> dict:
             if str(finding.get("observation_status", "")).lower() == "observed"
             and str(finding.get("status", "")).lower() != "approved"
         ),
+        "topology_violations": len(topology.get("violations", [])),
+        "topology_zones": len(topology.get("zones", [])),
         "threat_queue": threat_queue,
         "analyst_queue": analyst_queue,
         "metrics": metrics,
@@ -527,6 +568,10 @@ def root():
         <strong>Unauthorized Devices</strong>
         <p>Review unmanaged observed assets at <code>/api/devices/unauthorized</code>.</p>
       </section>
+      <section class="item">
+        <strong>Topology</strong>
+        <p>Inspect zones and observed cross-zone paths at <code>/api/topology</code>.</p>
+      </section>
     </div>
   </main>
 </body>
@@ -553,6 +598,25 @@ def api_alerts():
 @app.get("/api/network-watcher")
 def api_network_watcher():
     return jsonify(_network_watcher_summary())
+
+
+@app.get("/api/topology")
+def api_topology():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    limit = _request_limit()
+    return jsonify(_load_topology(limit=limit))
+
+
+@app.get("/api/topology/violations")
+def api_topology_violations():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    limit = _request_limit()
+    topology = _load_topology(limit=limit)
+    return jsonify({"count": len(topology.get("violations", [])), "violations": topology.get("violations", [])})
 
 
 @app.get("/api/soc-summary")
@@ -615,6 +679,7 @@ def api_incident_detail(incident_id: str):
     incident = manager.get_case(incident_id)
     if incident is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
+    devices = _load_devices(limit=1000)
     enriched = _inventory_service().enrich_incident(
         incident,
         alerts=_load_recent_alerts(limit=1000),
@@ -626,6 +691,7 @@ def api_incident_detail(incident_id: str):
         alerts=_load_recent_alerts(limit=1000),
         incidents=_load_incidents(limit=1000),
     )
+    enriched = _topology_service().enrich_incident(enriched, devices=devices)
     return jsonify(enriched)
 
 
@@ -956,6 +1022,7 @@ def soc_management():
         incidents=_load_incidents(limit=1000),
         limit=10,
     )
+    topology = _load_topology(limit=10)
     selected_incident = manager.get_case(selected_id) if selected_id else None
     if selected_incident is None and incidents:
         selected_incident = incidents[-1]
@@ -995,6 +1062,16 @@ def soc_management():
         "</tr>"
         for item in unauthorized_findings
     ) or "<tr><td colspan='5'>No unauthorized devices tracked yet.</td></tr>"
+    topology_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(item.get('src_zone', 'unknown')))}</td>"
+        f"<td>{html.escape(str(item.get('dst_zone', 'unknown')))}</td>"
+        f"<td>{html.escape(str(item.get('status', 'unknown')))}</td>"
+        f"<td>{int(item.get('observation_count', 0))}</td>"
+        f"<td>{html.escape(', '.join(item.get('sample_threats', [])) or 'none')}</td>"
+        "</tr>"
+        for item in topology.get("violations", [])
+    ) or "<tr><td colspan='5'>No cross-zone violations observed yet.</td></tr>"
 
     incident_detail = ""
     if selected_incident is not None:
@@ -1013,6 +1090,11 @@ def soc_management():
             incidents=_load_incidents(limit=1000),
         )
         unauthorized_summary = _render_unauthorized_summary(unauthorized_finding)
+        zone_context = _topology_service().enrich_incident(
+            dict(selected_incident),
+            devices=_load_devices(limit=1000),
+        ).get("zone_context", {})
+        zone_summary = _render_zone_summary(zone_context)
         update_section = ""
         if can_update:
             update_section = f"""
@@ -1098,6 +1180,10 @@ def soc_management():
           <section>
             <h4>Unauthorized Device</h4>
             {unauthorized_summary}
+          </section>
+          <section>
+            <h4>Zone Context</h4>
+            {zone_summary}
           </section>
         </div>
         {update_section}
@@ -1387,6 +1473,7 @@ def soc_management():
       <article class="card"><div class="k">Recent Alerts</div><div class="v">{snap['recent_alerts']}</div></article>
       <article class="card"><div class="k">Recent Cases</div><div class="v">{snap['recent_incidents']}</div></article>
       <article class="card"><div class="k">Unauthorized Devices</div><div class="v bad">{snap['unauthorized_active']}</div></article>
+      <article class="card"><div class="k">Topology Violations</div><div class="v warn">{snap['topology_violations']}</div></article>
     </section>
 
     <section class="metrics-grid">
@@ -1425,6 +1512,13 @@ def soc_management():
           <li>Active unmanaged: {snap['unauthorized_active']}</li>
         </ul>
       </article>
+      <article class="card">
+        <div class="k">Topology Coverage</div>
+        <ul class="metric-list">
+          <li>Zones: {snap['topology_zones']}</li>
+          <li>Violations: {snap['topology_violations']}</li>
+        </ul>
+      </article>
     </section>
 
     <section class="card">
@@ -1444,6 +1538,26 @@ def soc_management():
           </tr>
         </thead>
         <tbody>{unauthorized_rows}</tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Cross-Zone Paths</div>
+      <div class="table-meta">
+        <span>Observed zone-to-zone traffic paths without an allow policy or with an explicit block.</span>
+        <span><a href="/api/topology/violations">Open JSON</a></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Source Zone</th>
+            <th>Destination Zone</th>
+            <th>Status</th>
+            <th>Obs</th>
+            <th>Threats</th>
+          </tr>
+        </thead>
+        <tbody>{topology_rows}</tbody>
       </table>
     </section>
 

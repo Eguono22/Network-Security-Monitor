@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-153%20passed-2ea44f)
+![Tests](https://img.shields.io/badge/tests-156%20passed-2ea44f)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -134,6 +134,8 @@ Available routes:
 - `GET /api/devices/unauthorized`
 - `GET /api/devices/unauthorized/<ip>`
 - `GET /api/devices/<ip>`
+- `GET /api/topology`
+- `GET /api/topology/violations`
 - `PATCH /api/devices/unauthorized/<ip>`
 - `PATCH /api/incidents/<incident_id>`
 
@@ -161,6 +163,13 @@ Unauthorized device lifecycle:
 - Set `NSM_UNAUTHORIZED_DEVICES_FILE` to persist unmanaged-device review status
 - `GET /api/devices/unauthorized` lists observed assets missing from the seeded inventory
 - `PATCH /api/devices/unauthorized/<ip>` updates lifecycle state such as `new`, `investigating`, `approved`, or `blocked`
+
+Topology and zones:
+
+- Set `NSM_TOPOLOGY_FILE` to a JSON file with zones and optional cross-zone policies
+- `GET /api/topology` summarizes zones, observed cross-zone paths, and evaluated policy status
+- `GET /api/topology/violations` returns paths that are blocked or missing an allow policy
+- Incident detail responses include `zone_context` for source and destination asset placement
 
 ---
 
@@ -259,6 +268,12 @@ Example unauthorized device request:
 
 ```text
 GET /api/devices/unauthorized?status=new
+```
+
+Example topology request:
+
+```text
+GET /api/topology/violations
 ```
 
 Example threat-intel request:
@@ -527,7 +542,7 @@ On Windows with the project virtual environment:
 
 Current verified result in this repository:
 
-- `153 passed`
+- `156 passed`
 
 ---
 
@@ -537,7 +552,7 @@ Near-term project direction for `SentinelNet`:
 
 - Complete persistent storage beyond log-backed files for alerts and incidents
 - Expand SOC operations with deeper analyst workflow and richer authorization policy
-- Add deeper asset and network context such as topology and per-segment baselines
+- Add deeper asset and network context such as per-segment baselines and topology-aware detections
 - Integrate threat intelligence enrichment sources and IOC management
 - Introduce OT-focused visibility starting with protocol-aware detections
 - Explore multi-tenant controls for MSP-style operation

@@ -316,6 +316,119 @@ class TestApiRoutes:
                 os.environ["NSM_ALERT_LOG_FILE"] = prior_alert_log
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_api_topology_returns_zone_and_violation_summary(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-topology-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        seed_path = tmp_root / "devices.json"
+        topology_path = tmp_root / "topology.json"
+        alert_log_path = tmp_root / "alerts.log"
+        incidents_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "incident_id": "INC-TOP1",
+                            "created_at": 1,
+                            "updated_at": 2,
+                            "status": "open",
+                            "severity": "HIGH",
+                            "queue": "soc-triage",
+                            "threat_type": "PORT_SCAN",
+                            "src_ip": "10.0.0.5",
+                            "dst_ip": "10.0.1.10",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "incident_id": "INC-TOP2",
+                            "created_at": 3,
+                            "updated_at": 4,
+                            "status": "open",
+                            "severity": "CRITICAL",
+                            "queue": "soc-triage",
+                            "threat_type": "MALICIOUS_IP",
+                            "src_ip": "10.0.2.9",
+                            "dst_ip": "10.0.1.10",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        seed_path.write_text(
+            json.dumps(
+                {
+                    "devices": [
+                        {"ip": "10.0.0.5", "zone": "corp"},
+                        {"ip": "10.0.1.10", "zone": "dmz"},
+                        {"ip": "10.0.2.9", "zone": "guest"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        topology_path.write_text(
+            json.dumps(
+                {
+                    "zones": [
+                        {"name": "corp", "cidrs": ["10.0.0.0/24"]},
+                        {"name": "dmz", "cidrs": ["10.0.1.0/24"]},
+                        {"name": "guest", "cidrs": ["10.0.2.0/24"]},
+                    ],
+                    "policies": [
+                        {"name": "corp-dmz", "src_zone": "corp", "dst_zone": "dmz", "allowed": True},
+                        {"name": "guest-dmz-block", "src_zone": "guest", "dst_zone": "dmz", "allowed": False},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        prior_topology = os.environ.get("NSM_TOPOLOGY_FILE")
+        prior_alert_log = os.environ.get("NSM_ALERT_LOG_FILE")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+            os.environ["NSM_TOPOLOGY_FILE"] = str(topology_path)
+            os.environ["NSM_ALERT_LOG_FILE"] = str(alert_log_path)
+
+            client = app.test_client()
+            res = client.get("/api/topology", headers={"X-NSM-Role": "viewer"})
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert any(zone["name"] == "corp" for zone in payload["zones"])
+            assert any(path["src_zone"] == "guest" and path["status"] == "blocked" for path in payload["observed_paths"])
+
+            violations = client.get("/api/topology/violations", headers={"X-NSM-Role": "viewer"})
+            assert violations.status_code == 200
+            violations_payload = violations.get_json()
+            assert violations_payload["count"] >= 1
+            assert any(item["src_zone"] == "guest" for item in violations_payload["violations"])
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_inventory is None:
+                os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
+            else:
+                os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_topology is None:
+                os.environ.pop("NSM_TOPOLOGY_FILE", None)
+            else:
+                os.environ["NSM_TOPOLOGY_FILE"] = prior_topology
+            if prior_alert_log is None:
+                os.environ.pop("NSM_ALERT_LOG_FILE", None)
+            else:
+                os.environ["NSM_ALERT_LOG_FILE"] = prior_alert_log
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
     def test_api_incidents_supports_filters(self):
         pytest.importorskip("flask")
         from api.index import app
@@ -576,6 +689,7 @@ class TestApiRoutes:
         alerts_path = tmp_root / "alerts.jsonl"
         seed_path = tmp_root / "devices.json"
         review_path = tmp_root / "unauthorized.jsonl"
+        topology_path = tmp_root / "topology.json"
         incidents_path.write_text(
             json.dumps(
                 {
@@ -613,14 +727,20 @@ class TestApiRoutes:
             json.dumps({"devices": [{"ip": "10.0.0.8", "vendor": "HP"}]}),
             encoding="utf-8",
         )
+        topology_path.write_text(
+            json.dumps({"zones": [{"name": "edge", "cidrs": ["10.0.0.0/24"]}]}),
+            encoding="utf-8",
+        )
         prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
         prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
         prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
         prior_review = os.environ.get("NSM_UNAUTHORIZED_DEVICES_FILE")
+        prior_topology = os.environ.get("NSM_TOPOLOGY_FILE")
         os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
         os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
         os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
         os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = str(review_path)
+        os.environ["NSM_TOPOLOGY_FILE"] = str(topology_path)
         try:
             client = app.test_client()
             res = client.get("/api/incidents/INC-ASSET1", headers={"X-NSM-Role": "viewer"})
@@ -631,6 +751,7 @@ class TestApiRoutes:
             assert payload["source_asset"]["hostname"] == "web-01"
             assert payload["source_asset"]["os"] == "Windows Server"
             assert payload["unauthorized_device"] is None
+            assert payload["zone_context"]["src_zone"] == "edge"
         finally:
             if prior_incidents is None:
                 os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
@@ -648,6 +769,10 @@ class TestApiRoutes:
                 os.environ.pop("NSM_UNAUTHORIZED_DEVICES_FILE", None)
             else:
                 os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = prior_review
+            if prior_topology is None:
+                os.environ.pop("NSM_TOPOLOGY_FILE", None)
+            else:
+                os.environ["NSM_TOPOLOGY_FILE"] = prior_topology
             shutil.rmtree(tmp_root, ignore_errors=True)
 
     def test_api_incident_update_denies_viewer_role(self):

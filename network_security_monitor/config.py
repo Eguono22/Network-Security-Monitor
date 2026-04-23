@@ -159,6 +159,7 @@ class Config:
     API_DEFAULT_ROLE: str = "admin"
     DEVICE_INVENTORY_FILE: str = ""
     UNAUTHORIZED_DEVICES_FILE: str = "unauthorized_devices.jsonl"
+    TOPOLOGY_FILE: str = ""
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -216,6 +217,7 @@ class Config:
         self.UNAUTHORIZED_DEVICES_FILE = os.getenv(
             "NSM_UNAUTHORIZED_DEVICES_FILE", self.UNAUTHORIZED_DEVICES_FILE
         )
+        self.TOPOLOGY_FILE = os.getenv("NSM_TOPOLOGY_FILE", self.TOPOLOGY_FILE)
         trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
         if trusted_sources.strip():
             self.PORT_SCAN_TRUSTED_SOURCES = {

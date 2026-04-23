@@ -17,7 +17,7 @@
 
 ## Phase 3: Network & Asset Context
 - [x] Device inventory service (IP/MAC/vendor/OS/risk/open ports)
-- [ ] Network topology and zone mapping
+- [x] Network topology and zone mapping
 - [ ] Baseline per subnet/segment profiles
 - [x] Unauthorized device detection and lifecycle
 
