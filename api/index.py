@@ -19,6 +19,10 @@ from network_security_monitor.incident_manager import (
     IncidentValidationError,
 )
 from network_security_monitor.device_inventory import DeviceInventoryService
+from network_security_monitor.unauthorized_devices import (
+    UnauthorizedDeviceManager,
+    UnauthorizedDeviceValidationError,
+)
 from network_security_monitor.storage import AlertRepository, JsonlStore
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
@@ -144,6 +148,13 @@ def _inventory_service() -> DeviceInventoryService:
     return DeviceInventoryService(inventory_path)
 
 
+def _unauthorized_device_manager() -> UnauthorizedDeviceManager:
+    path = os.getenv("NSM_UNAUTHORIZED_DEVICES_FILE", "").strip()
+    if not path:
+        path = Config().UNAUTHORIZED_DEVICES_FILE
+    return UnauthorizedDeviceManager(path)
+
+
 def _incident_filter_args() -> dict[str, str]:
     return {
         "status": request.args.get("status", "").strip(),
@@ -223,6 +234,17 @@ def _load_devices(limit: int = _MAX_RECENT, *, risk_level: str = "", query: str 
     )
 
 
+def _load_unauthorized_devices(limit: int = _MAX_RECENT, *, status: str = "", query: str = "") -> list[dict]:
+    return _unauthorized_device_manager().list_findings(
+        inventory=_inventory_service(),
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+        limit=limit,
+        status=status,
+        query=query,
+    )
+
+
 def _isoish_to_display(value) -> str:
     if not value:
         return "n/a"
@@ -261,6 +283,20 @@ def _render_asset_summary(asset: dict | None) -> str:
         f"<li><strong>Threats</strong>: {html.escape(threat_types)}</li>"
         f"<li><strong>Tags</strong>: {html.escape(tags)}</li>"
         f"<li><strong>Incidents</strong>: {int(asset.get('incident_count', 0))} | <strong>Alerts</strong>: {int(asset.get('alert_count', 0))}</li>"
+        "</ul>"
+    )
+
+
+def _render_unauthorized_summary(finding: dict | None) -> str:
+    if not finding:
+        return "<p class='asset-empty'>This asset is currently not tracked as unauthorized.</p>"
+    return (
+        "<ul class='asset-list'>"
+        f"<li><strong>Status</strong>: {html.escape(str(finding.get('status', 'new')))}</li>"
+        f"<li><strong>Observation</strong>: {html.escape(str(finding.get('observation_status', 'observed')))}</li>"
+        f"<li><strong>Owner</strong>: {html.escape(str(finding.get('owner', '') or 'unassigned'))}</li>"
+        f"<li><strong>Queue</strong>: {html.escape(str(finding.get('queue', 'asset-security')))}</li>"
+        f"<li><strong>Notes</strong>: {html.escape(str(finding.get('notes', '') or 'none'))}</li>"
         "</ul>"
     )
 
@@ -323,8 +359,16 @@ def _soc_management_snapshot() -> dict:
     alerts = _load_recent_alerts()
     actions = _load_soc_actions()
     manager = _incident_manager()
+    inventory = _inventory_service()
+    unauthorized_manager = _unauthorized_device_manager()
     incidents = manager.list_cases(limit=1000)
     metrics = manager.compute_metrics(limit=1000)
+    unauthorized_devices = unauthorized_manager.list_findings(
+        inventory=inventory,
+        alerts=alerts,
+        incidents=incidents,
+        limit=1000,
+    )
     open_incidents = sum(1 for i in incidents if i.get("status") == "open")
     active_incidents = sum(
         1 for i in incidents if str(i.get("status", "open")).lower() in ACTIVE_INCIDENT_STATUSES
@@ -348,6 +392,13 @@ def _soc_management_snapshot() -> dict:
         "automation_actions": len(actions),
         "recent_alerts": len(alerts),
         "recent_incidents": len(incidents),
+        "unauthorized_devices": len(unauthorized_devices),
+        "unauthorized_active": sum(
+            1
+            for finding in unauthorized_devices
+            if str(finding.get("observation_status", "")).lower() == "observed"
+            and str(finding.get("status", "")).lower() != "approved"
+        ),
         "threat_queue": threat_queue,
         "analyst_queue": analyst_queue,
         "metrics": metrics,
@@ -472,6 +523,10 @@ def root():
         <strong>Device Inventory</strong>
         <p>Inspect asset context at <code>/api/devices</code>.</p>
       </section>
+      <section class="item">
+        <strong>Unauthorized Devices</strong>
+        <p>Review unmanaged observed assets at <code>/api/devices/unauthorized</code>.</p>
+      </section>
     </div>
   </main>
 </body>
@@ -565,6 +620,12 @@ def api_incident_detail(incident_id: str):
         alerts=_load_recent_alerts(limit=1000),
         incidents=_load_incidents(limit=1000),
     )
+    enriched["unauthorized_device"] = _unauthorized_device_manager().get_finding(
+        str(incident.get("src_ip", "")).strip(),
+        inventory=_inventory_service(),
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+    )
     return jsonify(enriched)
 
 
@@ -580,6 +641,61 @@ def api_devices():
         query=request.args.get("q", ""),
     )
     return jsonify({"count": len(devices), "devices": devices})
+
+
+@app.get("/api/devices/unauthorized")
+def api_unauthorized_devices():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    limit = _request_limit()
+    findings = _load_unauthorized_devices(
+        limit=limit,
+        status=request.args.get("status", ""),
+        query=request.args.get("q", ""),
+    )
+    return jsonify({"count": len(findings), "devices": findings})
+
+
+@app.get("/api/devices/unauthorized/<ip>")
+def api_unauthorized_device_detail(ip: str):
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
+    finding = _unauthorized_device_manager().get_finding(
+        ip,
+        inventory=_inventory_service(),
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+    )
+    if finding is None:
+        return jsonify({"error": "unauthorized_device_not_found", "ip": ip}), 404
+    return jsonify(finding)
+
+
+@app.patch("/api/devices/unauthorized/<ip>")
+def api_unauthorized_device_update(ip: str):
+    _, denial = _require_role("analyst")
+    if denial is not None:
+        return denial
+    payload = request.get_json(silent=True) or {}
+    allowed = {"status", "notes", "owner"}
+    changes = {key: value for key, value in payload.items() if key in allowed}
+    try:
+        finding = _unauthorized_device_manager().update_finding(
+            ip,
+            inventory=_inventory_service(),
+            alerts=_load_recent_alerts(limit=1000),
+            incidents=_load_incidents(limit=1000),
+            status=changes.get("status"),
+            notes=changes.get("notes"),
+            owner=changes.get("owner"),
+        )
+    except UnauthorizedDeviceValidationError as exc:
+        return jsonify({"error": "invalid_unauthorized_device_update", "message": str(exc)}), 400
+    if finding is None:
+        return jsonify({"error": "unauthorized_device_not_found", "ip": ip}), 404
+    return jsonify(finding)
 
 
 @app.get("/api/devices/<ip>")
@@ -824,6 +940,7 @@ def soc_management():
     snap = _soc_management_snapshot()
     manager = _incident_manager()
     inventory = _inventory_service()
+    unauthorized_manager = _unauthorized_device_manager()
     metrics = snap.get("metrics", {})
     mttr = metrics.get("mttr", {})
     sla = metrics.get("sla", {})
@@ -833,6 +950,12 @@ def soc_management():
     message = request.args.get("message", "").strip()
     error = request.args.get("error", "").strip()
     incidents = manager.list_cases(limit=100, **filters)
+    unauthorized_findings = unauthorized_manager.list_findings(
+        inventory=inventory,
+        alerts=_load_recent_alerts(limit=1000),
+        incidents=_load_incidents(limit=1000),
+        limit=10,
+    )
     selected_incident = manager.get_case(selected_id) if selected_id else None
     if selected_incident is None and incidents:
         selected_incident = incidents[-1]
@@ -862,6 +985,16 @@ def soc_management():
     filter_query = _build_query(filters)
     can_export = _role_allowed(current_role, "analyst")
     can_update = _role_allowed(current_role, "analyst")
+    unauthorized_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(item.get('ip', 'n/a')))}</td>"
+        f"<td>{html.escape(str(item.get('status', 'new')))}</td>"
+        f"<td>{html.escape(str(item.get('observation_status', 'observed')))}</td>"
+        f"<td>{html.escape(str(item.get('risk_level', 'low')))} ({int(item.get('risk_score', 0))})</td>"
+        f"<td>{html.escape(str(item.get('owner', '') or 'unassigned'))}</td>"
+        "</tr>"
+        for item in unauthorized_findings
+    ) or "<tr><td colspan='5'>No unauthorized devices tracked yet.</td></tr>"
 
     incident_detail = ""
     if selected_incident is not None:
@@ -873,6 +1006,13 @@ def soc_management():
             incidents=_load_incidents(limit=1000),
         )
         asset_summary = _render_asset_summary(source_asset)
+        unauthorized_finding = unauthorized_manager.get_finding(
+            str(selected_incident.get("src_ip", "")).strip(),
+            inventory=inventory,
+            alerts=_load_recent_alerts(limit=1000),
+            incidents=_load_incidents(limit=1000),
+        )
+        unauthorized_summary = _render_unauthorized_summary(unauthorized_finding)
         update_section = ""
         if can_update:
             update_section = f"""
@@ -954,6 +1094,10 @@ def soc_management():
           <section>
             <h4>Source Asset</h4>
             {asset_summary}
+          </section>
+          <section>
+            <h4>Unauthorized Device</h4>
+            {unauthorized_summary}
           </section>
         </div>
         {update_section}
@@ -1242,6 +1386,7 @@ def soc_management():
       <article class="card"><div class="k">Automation Actions</div><div class="v good">{snap['automation_actions']}</div></article>
       <article class="card"><div class="k">Recent Alerts</div><div class="v">{snap['recent_alerts']}</div></article>
       <article class="card"><div class="k">Recent Cases</div><div class="v">{snap['recent_incidents']}</div></article>
+      <article class="card"><div class="k">Unauthorized Devices</div><div class="v bad">{snap['unauthorized_active']}</div></article>
     </section>
 
     <section class="metrics-grid">
@@ -1273,6 +1418,33 @@ def soc_management():
         <div class="k">Resolved Trend (7d)</div>
         <p class="trend-text">{html.escape(_trend_summary(trends.get('resolved', [])))}</p>
       </article>
+      <article class="card">
+        <div class="k">Unauthorized Device Queue</div>
+        <ul class="metric-list">
+          <li>Tracked: {snap['unauthorized_devices']}</li>
+          <li>Active unmanaged: {snap['unauthorized_active']}</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Unauthorized Devices</div>
+      <div class="table-meta">
+        <span>Recent unmanaged assets inferred from observed activity and missing inventory records.</span>
+        <span><a href="/api/devices/unauthorized">Open JSON</a></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Status</th>
+            <th>Observation</th>
+            <th>Risk</th>
+            <th>Owner</th>
+          </tr>
+        </thead>
+        <tbody>{unauthorized_rows}</tbody>
+      </table>
     </section>
 
     <section class="card">

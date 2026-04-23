@@ -158,6 +158,7 @@ class Config:
     # is overridden by environment or an upstream proxy injects X-NSM-Role.
     API_DEFAULT_ROLE: str = "admin"
     DEVICE_INVENTORY_FILE: str = ""
+    UNAUTHORIZED_DEVICES_FILE: str = "unauthorized_devices.jsonl"
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -212,6 +213,9 @@ class Config:
         )
         self.API_DEFAULT_ROLE = os.getenv("NSM_API_DEFAULT_ROLE", self.API_DEFAULT_ROLE).strip().lower()
         self.DEVICE_INVENTORY_FILE = os.getenv("NSM_DEVICE_INVENTORY_FILE", self.DEVICE_INVENTORY_FILE)
+        self.UNAUTHORIZED_DEVICES_FILE = os.getenv(
+            "NSM_UNAUTHORIZED_DEVICES_FILE", self.UNAUTHORIZED_DEVICES_FILE
+        )
         trusted_sources = os.getenv("NSM_PORT_SCAN_TRUSTED_SOURCES", "")
         if trusted_sources.strip():
             self.PORT_SCAN_TRUSTED_SOURCES = {

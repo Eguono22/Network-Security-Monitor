@@ -97,6 +97,7 @@ class TestApiRoutes:
         tmp_root.mkdir(parents=True, exist_ok=True)
         incidents_path = tmp_root / "incidents.jsonl"
         seed_path = tmp_root / "devices.json"
+        alert_log_path = tmp_root / "alerts.log"
         incidents_path.write_text(
             json.dumps(
                 {
@@ -162,6 +163,153 @@ class TestApiRoutes:
                 os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
             else:
                 os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_alert_log is None:
+                os.environ.pop("NSM_ALERT_LOG_FILE", None)
+            else:
+                os.environ["NSM_ALERT_LOG_FILE"] = prior_alert_log
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_unauthorized_devices_lists_unmanaged_assets(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-unauth-devices-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        alerts_path = tmp_root / "alerts.jsonl"
+        seed_path = tmp_root / "devices.json"
+        alert_log_path = tmp_root / "alerts.log"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-UNAUTH1",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "10.0.0.77",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        alerts_path.write_text("", encoding="utf-8")
+        seed_path.write_text(json.dumps({"devices": []}), encoding="utf-8")
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
+        prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        prior_alert_log = os.environ.get("NSM_ALERT_LOG_FILE")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
+            os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+            os.environ["NSM_ALERT_LOG_FILE"] = str(alert_log_path)
+
+            client = app.test_client()
+            res = client.get("/api/devices/unauthorized?q=10.0.0.77", headers={"X-NSM-Role": "viewer"})
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["count"] == 1
+            assert payload["devices"][0]["ip"] == "10.0.0.77"
+            assert payload["devices"][0]["status"] == "new"
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_alerts is None:
+                os.environ.pop("NSM_ALERTS_DATA_FILE", None)
+            else:
+                os.environ["NSM_ALERTS_DATA_FILE"] = prior_alerts
+            if prior_inventory is None:
+                os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
+            else:
+                os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_alert_log is None:
+                os.environ.pop("NSM_ALERT_LOG_FILE", None)
+            else:
+                os.environ["NSM_ALERT_LOG_FILE"] = prior_alert_log
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_unauthorized_device_update_persists_status(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-unauth-update-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        alerts_path = tmp_root / "alerts.jsonl"
+        seed_path = tmp_root / "devices.json"
+        review_path = tmp_root / "unauthorized.jsonl"
+        alert_log_path = tmp_root / "alerts.log"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-UNAUTH2",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "CRITICAL",
+                    "queue": "soc-triage",
+                    "threat_type": "MALICIOUS_IP",
+                    "src_ip": "10.0.0.88",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        alerts_path.write_text("", encoding="utf-8")
+        seed_path.write_text(json.dumps({"devices": []}), encoding="utf-8")
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
+        prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        prior_review = os.environ.get("NSM_UNAUTHORIZED_DEVICES_FILE")
+        prior_alert_log = os.environ.get("NSM_ALERT_LOG_FILE")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
+            os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+            os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = str(review_path)
+            os.environ["NSM_ALERT_LOG_FILE"] = str(alert_log_path)
+
+            client = app.test_client()
+            res = client.patch(
+                "/api/devices/unauthorized/10.0.0.88",
+                json={"status": "investigating", "notes": "triaging", "owner": "alice"},
+                headers={"X-NSM-Role": "analyst"},
+            )
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["status"] == "investigating"
+            assert payload["notes"] == "triaging"
+            assert payload["owner"] == "alice"
+
+            detail = client.get("/api/devices/unauthorized/10.0.0.88", headers={"X-NSM-Role": "viewer"})
+            assert detail.status_code == 200
+            detail_payload = detail.get_json()
+            assert detail_payload["status"] == "investigating"
+            assert detail_payload["owner"] == "alice"
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_alerts is None:
+                os.environ.pop("NSM_ALERTS_DATA_FILE", None)
+            else:
+                os.environ["NSM_ALERTS_DATA_FILE"] = prior_alerts
+            if prior_inventory is None:
+                os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
+            else:
+                os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_review is None:
+                os.environ.pop("NSM_UNAUTHORIZED_DEVICES_FILE", None)
+            else:
+                os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = prior_review
             if prior_alert_log is None:
                 os.environ.pop("NSM_ALERT_LOG_FILE", None)
             else:
@@ -427,6 +575,7 @@ class TestApiRoutes:
         incidents_path = tmp_root / "incidents.jsonl"
         alerts_path = tmp_root / "alerts.jsonl"
         seed_path = tmp_root / "devices.json"
+        review_path = tmp_root / "unauthorized.jsonl"
         incidents_path.write_text(
             json.dumps(
                 {
@@ -467,9 +616,11 @@ class TestApiRoutes:
         prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
         prior_alerts = os.environ.get("NSM_ALERTS_DATA_FILE")
         prior_inventory = os.environ.get("NSM_DEVICE_INVENTORY_FILE")
+        prior_review = os.environ.get("NSM_UNAUTHORIZED_DEVICES_FILE")
         os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
         os.environ["NSM_ALERTS_DATA_FILE"] = str(alerts_path)
         os.environ["NSM_DEVICE_INVENTORY_FILE"] = str(seed_path)
+        os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = str(review_path)
         try:
             client = app.test_client()
             res = client.get("/api/incidents/INC-ASSET1", headers={"X-NSM-Role": "viewer"})
@@ -479,6 +630,7 @@ class TestApiRoutes:
             assert payload["source_asset"]["vendor"] == "HP"
             assert payload["source_asset"]["hostname"] == "web-01"
             assert payload["source_asset"]["os"] == "Windows Server"
+            assert payload["unauthorized_device"] is None
         finally:
             if prior_incidents is None:
                 os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
@@ -492,6 +644,10 @@ class TestApiRoutes:
                 os.environ.pop("NSM_DEVICE_INVENTORY_FILE", None)
             else:
                 os.environ["NSM_DEVICE_INVENTORY_FILE"] = prior_inventory
+            if prior_review is None:
+                os.environ.pop("NSM_UNAUTHORIZED_DEVICES_FILE", None)
+            else:
+                os.environ["NSM_UNAUTHORIZED_DEVICES_FILE"] = prior_review
             shutil.rmtree(tmp_root, ignore_errors=True)
 
     def test_api_incident_update_denies_viewer_role(self):

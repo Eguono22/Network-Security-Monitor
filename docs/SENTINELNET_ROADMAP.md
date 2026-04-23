@@ -19,7 +19,7 @@
 - [x] Device inventory service (IP/MAC/vendor/OS/risk/open ports)
 - [ ] Network topology and zone mapping
 - [ ] Baseline per subnet/segment profiles
-- [ ] Unauthorized device detection and lifecycle
+- [x] Unauthorized device detection and lifecycle
 
 ## Phase 4: Threat Intelligence & Enrichment
 - [ ] AbuseIPDB enrichment adapter
