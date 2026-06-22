@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from .device_inventory import DeviceInventoryService
-from .storage import JsonlStore
+from .storage import JsonlStore, ReadOnlyStoreError
 
 VALID_UNAUTHORIZED_DEVICE_STATUSES = ("new", "investigating", "approved", "blocked")
 
@@ -18,8 +18,8 @@ class UnauthorizedDeviceValidationError(ValueError):
 class UnauthorizedDeviceManager:
     """Tracks unmanaged observed assets and their review lifecycle."""
 
-    def __init__(self, path: str = "unauthorized_devices.jsonl"):
-        self._store = JsonlStore(path)
+    def __init__(self, path: str = "unauthorized_devices.jsonl", *, read_only: bool = False):
+        self._store = JsonlStore(path, read_only=read_only)
 
     def list_findings(
         self,
@@ -153,6 +153,8 @@ class UnauthorizedDeviceManager:
         notes: str | None = None,
         owner: str | None = None,
     ) -> dict[str, Any] | None:
+        if self._store.read_only:
+            raise ReadOnlyStoreError(f"unauthorized device store is read-only: {self._store.path}")
         current = self.get_finding(
             ip,
             inventory=inventory,

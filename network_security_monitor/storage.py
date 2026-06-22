@@ -17,12 +17,15 @@ from .models import Alert
 class JsonlStore:
     """Append-only JSONL storage with recent-record reads."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, read_only: bool = False):
         self.path = path
+        self.read_only = read_only
 
     def append(self, payload: dict[str, Any]) -> None:
         if not self.path:
             return
+        if self.read_only:
+            raise ReadOnlyStoreError(f"JSONL store is read-only: {self.path}")
         directory = os.path.dirname(self.path)
         if directory:
             os.makedirs(directory, exist_ok=True)
@@ -168,13 +171,19 @@ class AlertRepository:
 class IncidentStore(JsonlStore):
     """SQLite-backed incident storage with legacy JSONL migration."""
 
-    def __init__(self, path: str):
-        self.path = path
+    def __init__(self, path: str, *, read_only: bool = False):
+        super().__init__(path, read_only=read_only)
         self._legacy_path = self._resolve_legacy_path(path)
         self._db_path = self._resolve_db_path(path)
-        self._ensure_database()
+        self._prefer_legacy_jsonl = self.read_only and bool(self._legacy_path) and (
+            self.path.lower().endswith(".jsonl") or not os.path.exists(self._db_path)
+        )
+        if self._db_path == ":memory:" or not self.read_only:
+            self._ensure_database()
 
     def create_case(self, alert: Alert, queue: str = "soc-triage") -> dict[str, Any]:
+        if self.read_only:
+            raise ReadOnlyStoreError(f"incident store is read-only: {self.path}")
         now = time.time()
         incident_id = self._build_id(alert, now)
         case = {
@@ -196,16 +205,25 @@ class IncidentStore(JsonlStore):
         return case
 
     def get_case(self, incident_id: str) -> dict[str, Any] | None:
+        if self._prefer_legacy_jsonl:
+            return self._get_legacy_case(incident_id)
+        if self.read_only and self._db_path != ":memory:" and not os.path.exists(self._db_path):
+            return None
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT payload_json FROM incidents WHERE incident_id = ?",
-                (incident_id,),
-            ).fetchone()
+            try:
+                row = conn.execute(
+                    "SELECT payload_json FROM incidents WHERE incident_id = ?",
+                    (incident_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
         if row is None:
             return None
         return json.loads(row["payload_json"])
 
     def update_case(self, incident_id: str, **changes: Any) -> dict[str, Any] | None:
+        if self.read_only:
+            raise ReadOnlyStoreError(f"incident store is read-only: {self.path}")
         current = self.get_case(incident_id)
         if current is None:
             return None
@@ -233,6 +251,19 @@ class IncidentStore(JsonlStore):
         assignee: str = "",
         owner: str = "",
     ) -> list[dict[str, Any]]:
+        if self._prefer_legacy_jsonl:
+            return self._list_legacy_cases(
+                limit=limit,
+                status=status,
+                severity=severity,
+                queue=queue,
+                threat_type=threat_type,
+                src_ip=src_ip,
+                assignee=assignee,
+                owner=owner,
+            )
+        if self.read_only and self._db_path != ":memory:" and not os.path.exists(self._db_path):
+            return []
         clauses = []
         params: list[Any] = []
 
@@ -268,15 +299,21 @@ class IncidentStore(JsonlStore):
         params.append(max(1, int(limit)))
 
         with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
+            try:
+                rows = conn.execute(query, params).fetchall()
+            except sqlite3.OperationalError:
+                return []
         return [json.loads(row["payload_json"]) for row in reversed(rows)]
 
     def _connect(self) -> sqlite3.Connection:
         if self._db_path != ":memory:":
             directory = os.path.dirname(self._db_path)
-            if directory:
+            if directory and not self.read_only:
                 os.makedirs(directory, exist_ok=True)
-        conn = sqlite3.connect(self._db_path)
+        if self.read_only and self._db_path != ":memory:":
+            conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
+        else:
+            conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -366,6 +403,8 @@ class IncidentStore(JsonlStore):
             )
 
     def _upsert_case(self, case: dict[str, Any]) -> None:
+        if self.read_only:
+            raise ReadOnlyStoreError(f"incident store is read-only: {self.path}")
         with self._connect() as conn:
             conn.execute(
                 """
@@ -395,6 +434,83 @@ class IncidentStore(JsonlStore):
                 self._record_values(case),
             )
             conn.commit()
+
+    def _get_legacy_case(self, incident_id: str) -> dict[str, Any] | None:
+        for case in self._iter_legacy_cases():
+            if case.get("incident_id") == incident_id:
+                return case
+        return None
+
+    def _list_legacy_cases(
+        self,
+        *,
+        limit: int,
+        status: str,
+        severity: str,
+        queue: str,
+        threat_type: str,
+        src_ip: str,
+        assignee: str,
+        owner: str,
+    ) -> list[dict[str, Any]]:
+        statuses = [raw.strip().lower() for raw in str(status).split(",") if raw.strip()]
+        filtered = [
+            case
+            for case in self._iter_legacy_cases()
+            if self._legacy_case_matches(
+                case,
+                statuses=statuses,
+                severity=severity,
+                queue=queue,
+                threat_type=threat_type,
+                src_ip=src_ip,
+                assignee=assignee,
+                owner=owner,
+            )
+        ]
+        filtered.sort(key=lambda case: float(case.get("updated_at", case.get("created_at", 0.0)) or 0.0))
+        return filtered[-max(1, int(limit)) :]
+
+    def _iter_legacy_cases(self) -> list[dict[str, Any]]:
+        if not self._legacy_path or not os.path.exists(self._legacy_path):
+            return []
+        merged: dict[str, dict[str, Any]] = {}
+        for record in JsonlStore(self._legacy_path).read_all():
+            incident_id = str(record.get("incident_id", "")).strip()
+            if not incident_id:
+                continue
+            current = dict(merged.get(incident_id, {}))
+            current.update(record)
+            merged[incident_id] = current
+        return list(merged.values())
+
+    @staticmethod
+    def _legacy_case_matches(
+        case: dict[str, Any],
+        *,
+        statuses: list[str],
+        severity: str,
+        queue: str,
+        threat_type: str,
+        src_ip: str,
+        assignee: str,
+        owner: str,
+    ) -> bool:
+        if statuses and str(case.get("status", "open")).lower() not in statuses:
+            return False
+        if severity and str(case.get("severity", "")).upper() != str(severity).upper():
+            return False
+        if queue and str(case.get("queue", "")).lower() != str(queue).lower():
+            return False
+        if threat_type and str(case.get("threat_type", "")).upper() != str(threat_type).upper():
+            return False
+        if src_ip and str(case.get("src_ip", "")) != str(src_ip):
+            return False
+        if assignee and str(case.get("assignee", "")).lower() != str(assignee).lower():
+            return False
+        if owner and str(case.get("owner", "")).lower() != str(owner).lower():
+            return False
+        return True
 
     @staticmethod
     def _record_values(case: dict[str, Any]) -> tuple[Any, ...]:
@@ -449,3 +565,7 @@ class IncidentStore(JsonlStore):
         base = f"{alert.threat_type.value}|{alert.src_ip}|{now}"
         digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
         return f"INC-{digest.upper()}"
+
+
+class ReadOnlyStoreError(RuntimeError):
+    """Raised when write operations are attempted in read-only mode."""

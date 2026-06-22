@@ -1,0 +1,40 @@
+{
+  "zones": [
+    {
+      "name": "corp",
+      "cidrs": ["10.0.0.0/24"]
+    },
+    {
+      "name": "dmz",
+      "cidrs": ["10.0.1.0/24"]
+    },
+    {
+      "name": "guest",
+      "cidrs": ["10.0.2.0/24"]
+    },
+    {
+      "name": "internet",
+      "cidrs": ["203.0.113.0/24"]
+    }
+  ],
+  "policies": [
+    {
+      "name": "corp-to-dmz-web",
+      "src_zone": "corp",
+      "dst_zone": "dmz",
+      "allowed": true
+    },
+    {
+      "name": "guest-to-dmz-block",
+      "src_zone": "guest",
+      "dst_zone": "dmz",
+      "allowed": false
+    },
+    {
+      "name": "internet-to-dmz-review",
+      "src_zone": "internet",
+      "dst_zone": "dmz",
+      "allowed": false
+    }
+  ]
+}

@@ -130,6 +130,13 @@ The repository includes a Flask-based entrypoint for lightweight API and
 dashboard views, including Vercel-compatible serverless deployment for
 read-only monitoring surfaces.
 
+For deployment setup and Vercel-specific caveats, see
+[`docs/VERCEL_DEPLOYMENT.md`](docs/VERCEL_DEPLOYMENT.md).
+For the fastest Vercel UI deployment flow, see
+[`docs/VERCEL_DEPLOY_NOW.md`](docs/VERCEL_DEPLOY_NOW.md).
+For the production persistence migration path, see
+[`docs/PRODUCTION_PERSISTENCE_PLAN.md`](docs/PRODUCTION_PERSISTENCE_PLAN.md).
+
 Available routes:
 
 - `GET /`

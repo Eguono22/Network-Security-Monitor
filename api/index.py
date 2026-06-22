@@ -24,7 +24,7 @@ from network_security_monitor.unauthorized_devices import (
     UnauthorizedDeviceValidationError,
 )
 from network_security_monitor.network_topology import NetworkTopologyService
-from network_security_monitor.storage import AlertRepository, JsonlStore
+from network_security_monitor.storage import AlertRepository, JsonlStore, ReadOnlyStoreError
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
 
@@ -34,6 +34,37 @@ app = Flask(__name__)
 _MAX_RECENT = 100
 _VALID_API_ROLES = ("viewer", "analyst", "admin")
 _ROLE_RANK = {role: index for index, role in enumerate(_VALID_API_ROLES)}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _serverless_read_only_enabled() -> bool:
+    explicit = os.getenv("NSM_SERVERLESS_READ_ONLY")
+    if explicit is not None:
+        return _env_bool("NSM_SERVERLESS_READ_ONLY")
+    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+
+
+def _read_only_mode_error() -> tuple[Response, int]:
+    return (
+        jsonify(
+            {
+                "error": "read_only_mode",
+                "message": "This deployment is running in serverless read-only mode; write actions are disabled.",
+            }
+        ),
+        503,
+    )
 
 
 def _normalize_role(value) -> str:
@@ -134,12 +165,18 @@ def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
 
 
 def _load_incidents(limit: int = _MAX_RECENT) -> list[dict]:
-    manager = IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    manager = IncidentManager(
+        os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"),
+        read_only=_serverless_read_only_enabled(),
+    )
     return manager.list_cases(limit=limit)
 
 
 def _incident_manager() -> IncidentManager:
-    return IncidentManager(os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"))
+    return IncidentManager(
+        os.getenv("NSM_INCIDENTS_LOG_FILE", "incidents.db"),
+        read_only=_serverless_read_only_enabled(),
+    )
 
 
 def _inventory_service() -> DeviceInventoryService:
@@ -153,7 +190,7 @@ def _unauthorized_device_manager() -> UnauthorizedDeviceManager:
     path = os.getenv("NSM_UNAUTHORIZED_DEVICES_FILE", "").strip()
     if not path:
         path = Config().UNAUTHORIZED_DEVICES_FILE
-    return UnauthorizedDeviceManager(path)
+    return UnauthorizedDeviceManager(path, read_only=_serverless_read_only_enabled())
 
 
 def _topology_service() -> NetworkTopologyService:
@@ -744,6 +781,8 @@ def api_unauthorized_device_update(ip: str):
     _, denial = _require_role("analyst")
     if denial is not None:
         return denial
+    if _serverless_read_only_enabled():
+        return _read_only_mode_error()
     payload = request.get_json(silent=True) or {}
     allowed = {"status", "notes", "owner"}
     changes = {key: value for key, value in payload.items() if key in allowed}
@@ -759,6 +798,8 @@ def api_unauthorized_device_update(ip: str):
         )
     except UnauthorizedDeviceValidationError as exc:
         return jsonify({"error": "invalid_unauthorized_device_update", "message": str(exc)}), 400
+    except ReadOnlyStoreError:
+        return _read_only_mode_error()
     if finding is None:
         return jsonify({"error": "unauthorized_device_not_found", "ip": ip}), 404
     return jsonify(finding)
@@ -784,6 +825,8 @@ def api_incident_update(incident_id: str):
     _, denial = _require_role("analyst")
     if denial is not None:
         return denial
+    if _serverless_read_only_enabled():
+        return _read_only_mode_error()
     manager = _incident_manager()
     payload = request.get_json(silent=True) or {}
     allowed = {
@@ -799,6 +842,8 @@ def api_incident_update(incident_id: str):
         updated = manager.update_case(incident_id, **changes)
     except IncidentValidationError as exc:
         return jsonify({"error": "invalid_incident_update", "message": str(exc)}), 400
+    except ReadOnlyStoreError:
+        return _read_only_mode_error()
     if updated is None:
         return jsonify({"error": "incident_not_found", "incident_id": incident_id}), 404
     return jsonify(updated)
@@ -830,6 +875,18 @@ def soc_management_incident_update(incident_id: str):
         if query:
             location = f"{location}?{query}"
         return redirect(location, code=303)
+    if _serverless_read_only_enabled():
+        query = _build_query(
+            {
+                **filters,
+                "incident_id": selected_id,
+                "error": "serverless read-only mode is active; incident updates are disabled on this deployment",
+            }
+        )
+        location = "/soc-management"
+        if query:
+            location = f"{location}?{query}"
+        return redirect(location, code=303)
     allowed = ("status", "queue", "assignee", "owner", "notes")
     changes = {key: request.form.get(key, "").strip() for key in allowed if request.form.get(key) is not None}
     changes = {key: value for key, value in changes.items() if value}
@@ -841,6 +898,9 @@ def soc_management_incident_update(incident_id: str):
     except IncidentValidationError as exc:
         updated = None
         error = str(exc)
+    except ReadOnlyStoreError:
+        updated = None
+        error = "serverless read-only mode is active; incident updates are disabled on this deployment"
     if updated is None and not error:
         error = f"incident not found: {incident_id}"
     if updated is not None:
@@ -1003,6 +1063,7 @@ def soc_management():
     current_role, denial = _require_role("viewer", page=True)
     if denial is not None:
         return denial
+    read_only_mode = _serverless_read_only_enabled()
     snap = _soc_management_snapshot()
     manager = _incident_manager()
     inventory = _inventory_service()
@@ -1051,7 +1112,7 @@ def soc_management():
     active_filter_count = sum(1 for value in filters.values() if value)
     filter_query = _build_query(filters)
     can_export = _role_allowed(current_role, "analyst")
-    can_update = _role_allowed(current_role, "analyst")
+    can_update = _role_allowed(current_role, "analyst") and not read_only_mode
     unauthorized_rows = "".join(
         "<tr>"
         f"<td>{html.escape(str(item.get('ip', 'n/a')))}</td>"
@@ -1137,10 +1198,15 @@ def soc_management():
           </div>
         </form>"""
         else:
+            update_help = (
+                "Serverless read-only mode is active for this deployment, so incident updates are disabled."
+                if read_only_mode
+                else "Read-only access. Incident updates require the analyst role or higher."
+            )
             update_section = f"""
         <div class="read-only-note">
           <div class="section-title">Update Incident</div>
-          <p>Read-only access. Incident updates require the <code>analyst</code> role or higher.</p>
+          <p>{html.escape(update_help)}</p>
           <div class="form-actions">
             <a href="/api/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}">Open JSON</a>
           </div>
@@ -1464,7 +1530,7 @@ def soc_management():
 
     {f'<div class="banner ok">{html.escape(message)}</div>' if message else ''}
     {f'<div class="banner err">{html.escape(error)}</div>' if error else ''}
-    {'' if can_update else '<div class="banner ok">Read-only mode active. Use an analyst or admin role to update cases or export CSV.</div>'}
+    {'' if can_update else ('<div class="banner ok">Serverless read-only mode active. Incident updates are disabled on this Vercel deployment.</div>' if read_only_mode else '<div class="banner ok">Read-only mode active. Use an analyst or admin role to update cases or export CSV.</div>')}
 
     <section class="kpis">
       <article class="card"><div class="k">Active Incidents</div><div class="v warn">{snap['active_incidents']}</div></article>

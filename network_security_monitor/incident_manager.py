@@ -25,9 +25,9 @@ class IncidentValidationError(ValueError):
 class IncidentManager:
     """Stores and retrieves incident cases using the configured backing store."""
 
-    def __init__(self, path: str = "incidents.db"):
+    def __init__(self, path: str = "incidents.db", *, read_only: bool = False):
         self._path = path
-        self._store = IncidentStore(path)
+        self._store = IncidentStore(path, read_only=read_only)
 
     def create_case(self, alert: Alert, queue: str = "soc-triage") -> dict:
         return self._store.create_case(alert, queue=queue)

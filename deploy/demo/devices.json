@@ -1,0 +1,32 @@
+{
+  "devices": [
+    {
+      "ip": "10.0.0.5",
+      "hostname": "app-01",
+      "vendor": "Dell",
+      "os": "Ubuntu 24.04",
+      "open_ports": [22, 443],
+      "zone": "corp",
+      "tags": ["production", "application"]
+    },
+    {
+      "ip": "10.0.1.10",
+      "hostname": "dmz-web-01",
+      "vendor": "VMware",
+      "os": "Debian 12",
+      "open_ports": [80, 443],
+      "zone": "dmz",
+      "tags": ["dmz", "web"]
+    },
+    {
+      "ip": "203.0.113.5",
+      "hostname": "bad-edge-host",
+      "vendor": "Unknown",
+      "os": "Unknown",
+      "open_ports": [443],
+      "zone": "internet",
+      "managed": false,
+      "tags": ["external", "threat-intel"]
+    }
+  ]
+}

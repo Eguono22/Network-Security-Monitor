@@ -834,6 +834,103 @@ class TestApiRoutes:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
             shutil.rmtree(tmp_root, ignore_errors=True)
 
+    def test_api_incidents_support_serverless_read_only_jsonl_source(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incidents-vercel-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-VERCEL1",
+                    "created_at": 1,
+                    "updated_at": 2,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "10.0.0.10",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_vercel = os.environ.get("VERCEL")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["VERCEL"] = "1"
+
+            client = app.test_client()
+            res = client.get("/api/incidents", headers={"X-NSM-Role": "viewer"})
+            assert res.status_code == 200
+            payload = res.get_json()
+            assert payload["count"] == 1
+            assert payload["incidents"][0]["incident_id"] == "INC-VERCEL1"
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_vercel is None:
+                os.environ.pop("VERCEL", None)
+            else:
+                os.environ["VERCEL"] = prior_vercel
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_api_incident_update_rejects_serverless_read_only_mode(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"api-incident-readonly-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-READONLY1",
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "1.1.1.1",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_vercel = os.environ.get("VERCEL")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["VERCEL"] = "1"
+
+            client = app.test_client()
+            res = client.patch(
+                "/api/incidents/INC-READONLY1",
+                json={"status": "assigned"},
+                headers={"X-NSM-Role": "analyst"},
+            )
+            assert res.status_code == 503
+            payload = res.get_json()
+            assert payload["error"] == "read_only_mode"
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_vercel is None:
+                os.environ.pop("VERCEL", None)
+            else:
+                os.environ["VERCEL"] = prior_vercel
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
     def test_api_incidents_rejects_invalid_role_header(self):
         pytest.importorskip("flask")
         from api.index import app
@@ -1140,4 +1237,54 @@ class TestApiRoutes:
                 os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
             else:
                 os.environ["NSM_INCIDENTS_LOG_FILE"] = prior
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_soc_management_shows_serverless_read_only_notice_for_analysts(self):
+        pytest.importorskip("flask")
+        from api.index import app
+
+        tmp_root = Path(".test_tmp") / f"soc-readonly-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        incidents_path = tmp_root / "incidents.jsonl"
+        incidents_path.write_text(
+            json.dumps(
+                {
+                    "incident_id": "INC-SOC-RO1",
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "status": "open",
+                    "severity": "HIGH",
+                    "queue": "soc-triage",
+                    "threat_type": "PORT_SCAN",
+                    "src_ip": "1.1.1.1",
+                    "metadata": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        prior_incidents = os.environ.get("NSM_INCIDENTS_LOG_FILE")
+        prior_vercel = os.environ.get("VERCEL")
+        try:
+            os.environ["NSM_INCIDENTS_LOG_FILE"] = str(incidents_path)
+            os.environ["VERCEL"] = "1"
+
+            client = app.test_client()
+            res = client.get(
+                "/soc-management?incident_id=INC-SOC-RO1",
+                headers={"X-NSM-Role": "analyst"},
+            )
+            assert res.status_code == 200
+            body = res.get_data(as_text=True)
+            assert "Serverless read-only mode active" in body
+            assert "Save Incident Update" not in body
+        finally:
+            if prior_incidents is None:
+                os.environ.pop("NSM_INCIDENTS_LOG_FILE", None)
+            else:
+                os.environ["NSM_INCIDENTS_LOG_FILE"] = prior_incidents
+            if prior_vercel is None:
+                os.environ.pop("VERCEL", None)
+            else:
+                os.environ["VERCEL"] = prior_vercel
             shutil.rmtree(tmp_root, ignore_errors=True)
