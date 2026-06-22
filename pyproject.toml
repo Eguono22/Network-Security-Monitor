@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "network-security-monitor"
+version = "0.1.0"
+description = "Network security monitoring with simulation, alerting, incidents, and lightweight SOC APIs."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "scapy>=2.5.0",
+  "colorama>=0.4.4",
+  "psutil>=5.9.0",
+  "flask>=3.0.0",
+]
+
+[project.scripts]
+nsm = "network_security_monitor.cli:run_cli"
+nsm-smoke = "network_security_monitor.cli:run_smoke_cli"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["network_security_monitor*", "api*"]

@@ -119,11 +119,16 @@ class AlertManager:
     def _build_logger(self) -> logging.Logger:
         logger = logging.getLogger("nsm.alerts")
         logger.setLevel(logging.DEBUG)
+        logger.propagate = False
 
-        # Avoid adding duplicate handlers when the class is instantiated more
-        # than once (common in unit tests).
-        if logger.handlers:
-            return logger
+        # Rebuild handlers for every instance so the active config controls
+        # which files receive alerts during tests, smoke runs, and demos.
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            try:
+                handler.close()
+            except OSError:
+                pass
 
         # Console handler
         console_handler = logging.StreamHandler()

@@ -184,3 +184,26 @@ class TestAlertManager:
             assert payload["metadata"]["incident_ids"] == ["INC-123", "INC-456"]
         finally:
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+    def test_file_logger_reconfigures_for_each_alert_manager_instance(self):
+        tmp_root = Path(".test_tmp") / f"alerts-log-{uuid.uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            cfg_a = Config()
+            cfg_a.ALERT_LOG_FILE = str(tmp_root / "first.log")
+            am_a = AlertManager(cfg_a)
+            am_a.add(_make_alert(src_ip="10.0.0.11"))
+
+            cfg_b = Config()
+            cfg_b.ALERT_LOG_FILE = str(tmp_root / "second.log")
+            am_b = AlertManager(cfg_b)
+            am_b.add(_make_alert(src_ip="10.0.0.22"))
+
+            first_log = (tmp_root / "first.log").read_text(encoding="utf-8")
+            second_log = (tmp_root / "second.log").read_text(encoding="utf-8")
+
+            assert "10.0.0.11" in first_log
+            assert "10.0.0.22" not in first_log
+            assert "10.0.0.22" in second_log
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)

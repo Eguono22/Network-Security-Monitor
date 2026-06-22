@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-156%20passed-2ea44f)
+![Tests](https://img.shields.io/badge/tests-158%20passed-2ea44f)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -47,28 +47,42 @@ The strongest near-term product direction for this repo is:
 
 ## Quick Start
 
-Install dependencies:
+Fastest setup on Windows:
 
-```bash
-pip install -r requirements.txt
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\bootstrap.ps1
 ```
 
-Run the simulator without the dashboard:
+Fastest setup on Linux:
 
 ```bash
-python main.py --simulate --no-dashboard
+bash ./deploy/bootstrap.sh
 ```
 
-Run the simulator with the real-time dashboard:
+Both scripts create or reuse `.venv`, attempt an editable install, and run a
+smoke test that validates simulation, persistence, and API output. If editable
+install is unavailable, the scripts fall back to repo-local execution and
+create `.venv` CLI shims for `nsm` and `nsm-smoke`.
+Artifacts land in `.tmp/first-run-demo/`.
+
+Manual setup:
 
 ```bash
-python main.py --simulate
+python -m pip install -r requirements.txt
+python -m pip install --no-build-isolation -e .
+nsm --simulate --no-dashboard
+```
+
+If editable install is unavailable, the equivalent repo-local command is:
+
+```bash
+python -m network_security_monitor --simulate --no-dashboard
 ```
 
 View previously generated alerts:
 
 ```bash
-python main.py --show-alerts alerts.log
+nsm --show-alerts alerts.log
 ```
 
 ---
@@ -77,11 +91,11 @@ python main.py --show-alerts alerts.log
 
 If you want the fastest path to seeing value from the project:
 
-1. Install dependencies with `pip install -r requirements.txt`
-2. Run `python main.py --simulate --no-dashboard`
-3. Inspect `alerts.log`, `soc_actions.log`, and `incidents.db`
-4. Run `python main.py --simulate` to see the real-time dashboard output
-5. Review profiles in `config_profiles.json` and rerun with `--profile office_tuned`
+1. Run the bootstrap script for your platform
+2. Inspect `.tmp/first-run-demo/alerts.log`, `alerts.jsonl`, `soc_actions.jsonl`, and `incidents.db`
+3. Open `.tmp/first-run-demo/smoke_test_summary.json` to confirm the API and incident checks passed
+4. Run `nsm --simulate --no-dashboard` for a local CLI-only pass
+5. Run `nsm --simulate --profile office_tuned` to see the real-time dashboard output
 
 For current product execution priorities, see `docs/WEEK1_EXECUTION_PLAN.md`.
 
@@ -94,9 +108,9 @@ For current product execution priorities, see `docs/WEEK1_EXECUTION_PLAN.md`.
 Best for demos, testing, and local development. No raw socket privileges required.
 
 ```bash
-python main.py --simulate
-python main.py --simulate --no-dashboard
-python main.py --simulate --profile office_tuned --save-tuning tuning.json
+nsm --simulate
+nsm --simulate --no-dashboard
+nsm --simulate --profile office_tuned --save-tuning tuning.json
 ```
 
 ### Live Capture
@@ -104,10 +118,10 @@ python main.py --simulate --profile office_tuned --save-tuning tuning.json
 Best for real monitoring on a host with packet capture privileges.
 
 ```bash
-python main.py --list-interfaces
-sudo python main.py --live
-sudo python main.py --live --interface eth0
-python main.py --live --interface eth0 --live-duration 1800
+nsm --list-interfaces
+sudo nsm --live
+sudo nsm --live --interface eth0
+nsm --live --interface eth0 --live-duration 1800
 ```
 
 ### API / Dashboard
@@ -542,7 +556,7 @@ On Windows with the project virtual environment:
 
 Current verified result in this repository:
 
-- `156 passed`
+- `158 passed`
 
 ---
 
@@ -575,7 +589,7 @@ Suggested local workflow:
 1. Create or activate the project virtual environment
 2. Install dependencies from `requirements.txt`
 3. Run `.\.venv\Scripts\python.exe -m pytest tests\ -v` on Windows, or `pytest tests/ -v` elsewhere
-4. Validate your change in simulation mode with `python main.py --simulate --no-dashboard`
+4. Validate your change in simulation mode with `nsm --simulate --no-dashboard`
 
 Keep changes focused, preserve existing behavior unless the change is
 intentional, and add tests when detector or workflow logic changes.
