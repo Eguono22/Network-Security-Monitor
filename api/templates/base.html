@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SentinelNet · {% block title %}Security overview{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  {% block scripts %}{% endblock %}
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/dashboard"><span class="shield">S</span> SentinelNet</a>
+    <div class="workspace">WORKSPACE <strong>Network operations</strong></div>
+    <nav aria-label="Main navigation">
+      <a href="/" {% if active_page == "home" %}class="selected" aria-current="page"{% endif %}>⌂ <span>Workspace home</span></a>
+      <a href="/dashboard" {% if active_page == "overview" %}class="selected" aria-current="page"{% endif %}>◈ <span>Overview</span></a>
+      <a href="/network-watcher" {% if active_page == "watcher" %}class="selected" aria-current="page"{% endif %}>◎ <span>Network watcher</span></a>
+      <a href="/soc-management" {% if active_page == "soc" %}class="selected" aria-current="page"{% endif %}>▤ <span>SOC management</span></a>
+      <a href="/devices" {% if active_page == "devices" %}class="selected" aria-current="page"{% endif %}>▦ <span>Device inventory</span></a>
+      <a href="/threat-intel" {% if active_page == "intel" %}class="selected" aria-current="page"{% endif %}>◇ <span>Threat intelligence</span></a>
+    </nav>
+    <div class="sidebar-bottom"><span class="dot"></span> Security operations<br><small>Visibility. Detection. Response.</small></div>
+  </aside>
+  <main>
+    <header><span>WORKSPACE <span class="slash">/</span> {% block breadcrumb %}Overview{% endblock %}</span><a href="/">Workspace home ↗</a></header>
+    {% block content %}{% endblock %}
+    <footer>SentinelNet <span>Stored telemetry · This view does not start packet capture</span></footer>
+  </main>
+  {% block dialogs %}{% endblock %}
+</body>
+</html>

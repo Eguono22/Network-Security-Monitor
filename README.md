@@ -126,6 +126,51 @@ nsm --live --interface eth0 --live-duration 1800
 
 ### API / Dashboard
 
+Start the local web app after installing dependencies:
+
+```bash
+python -m flask --app api.index run --debug
+```
+
+Open `http://127.0.0.1:5000/` for the workspace home, guided first-run steps,
+and current data readiness. It shows available alert, incident, inventory, and
+zone data with direct links into each workflow.
+
+Open `http://127.0.0.1:5000/dashboard` for the SentinelNet overview. It includes
+severity summaries, detection breakdowns, search, severity filters, and alert
+evidence details. Stored alerts refresh every 15 seconds while the tab is visible.
+
+Open `http://127.0.0.1:5000/devices` to search assets by IP, hostname, vendor,
+OS, or tag and filter by risk or management status. Select an asset to inspect
+its profile and linked incidents. Analysts and admins can save the review
+status, owner, and notes for unmanaged devices; read-only deployments show
+review context without edit controls. Review status tracks analyst decisions;
+marking a device blocked does not change network or firewall settings.
+
+Open `http://127.0.0.1:5000/network-watcher` to inspect top alert sources,
+network zones, and observed cross-zone paths. Filter paths to review missing or
+disallowed policies. The view refreshes stored telemetry every 15 seconds;
+it does not measure packet rate or start capture. Set `NSM_TOPOLOGY_FILE` to
+configure zone CIDRs and directional allow policies. Path observations combine
+alerts and incidents, which can describe the same underlying event.
+
+Open `http://127.0.0.1:5000/soc-management` for the analyst workspace. Filter
+cases by status, severity, queue, source, threat, assignee, or owner; select a
+case to inspect its evidence and update its lifecycle. The queue shows all
+loaded matches (up to 100), newest first. Analyst and admin roles can export
+filtered cases to CSV; updates also require a writable deployment.
+
+Open `http://127.0.0.1:5000/threat-intel` to look up IPs, domains, and URLs.
+Device profiles link directly to IP lookups. Results show local watchlist and
+heuristic signals, related detection counts, and signal provenance. This is
+local demo enrichment, not an external reputation feed; confidence and risk
+scores are deterministic heuristics. Lookups require viewer access or higher.
+To populate an empty dashboard, run the simulation in another terminal:
+
+```bash
+python -m network_security_monitor --simulate --no-dashboard
+```
+
 The repository includes a Flask-based entrypoint for lightweight API and
 dashboard views, including Vercel-compatible serverless deployment for
 read-only monitoring surfaces.
@@ -142,7 +187,10 @@ Available routes:
 - `GET /`
 - `GET /health`
 - `GET /dashboard`
+- `GET /devices`
+- `GET /devices/<ip>`
 - `GET /network-watcher`
+- `GET /threat-intel`
 - `GET /soc-management`
 - `GET /api/alerts`
 - `GET /api/network-watcher`

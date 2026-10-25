@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Device inventory{% endblock %}
+{% block breadcrumb %}Device inventory{% endblock %}
+{% block content %}
+<section class="heading"><div><div class="eyebrow">ASSET VISIBILITY</div><h1>Device inventory</h1><p>Know your assets. Investigate the devices that need attention.</p></div><a class="button-link" href="{{ url_for('devices_page', q=query, risk_level=risk, management=management) }}">↻ Refresh inventory</a></section>
+<section class="metrics" aria-label="Inventory summary">
+  <article><span>Known devices</span><strong>{{ total }}</strong><small>Up to 500 inventory records</small></article>
+  <article><span>Managed assets</span><strong>{{ managed }}</strong><small>Listed in your seeded inventory</small></article>
+  <article><span>Unmanaged assets</span><strong class="high-text">{{ total - managed }}</strong><small>Observed outside the inventory</small></article>
+  <article><span>High risk assets</span><strong class="critical-text">{{ high_risk }}</strong><small>High or critical risk rating</small></article>
+</section>
+<section class="panel">
+  <div class="panel-heading"><div><h2>Assets across your network</h2><p>Risk combines stored asset context and recent detections.</p></div><a href="/api/devices?limit=500">View JSON ↗</a></div>
+  <form class="filters" method="get" action="/devices">
+    <label class="search"><span class="sr-only">Search devices</span><input type="search" name="q" value="{{ query }}" placeholder="Search IP, hostname, vendor, OS, or tag…"></label>
+    <label><span class="sr-only">Risk level</span><select name="risk_level"><option value="">All risk levels</option>{% for level in ['critical', 'high', 'medium', 'low'] %}<option value="{{ level }}" {% if risk == level %}selected{% endif %}>{{ level|capitalize }}</option>{% endfor %}</select></label>
+    <label><span class="sr-only">Management status</span><select name="management"><option value="">All devices</option value="managed" {% if management == 'managed' %}selected{% endif %}>Managed</option><option value="unmanaged" {% if management == 'unmanaged' %}selected{% endif %}>Unmanaged</option></select></label>
+    <button type="submit">Apply</button><a href="/devices">Reset</a>
+  </form>
+  <p class="inventory-count">{{ devices|length }} of {{ total }} devices · sorted by risk</p>
+  {% if devices %}
+  <div class="table-scroll"><table><thead><tr><th>Asset</th><th>IP address</th><th>Risk</th><th>Management</th><th>Alerts / incidents</th><th>Context</th></tr></thead><tbody>
+  {% for device in devices %}<tr><td><a href="{{ url_for('device_page', ip=device.ip) }}">{{ device.hostname or 'Unnamed device' }}</a><small class="cell-secondary">{{ device.os }} · {{ device.vendor }}</small></td><td>{{ device.ip }}</td><td><span class="badge {{ device.risk_level|upper }}">{{ device.risk_level|upper }} · {{ device.risk_score }}</span></td><td>{{ 'Managed' if device.managed else 'Unmanaged' }}</td><td>{{ device.alert_count }} / {{ device.incident_count }}</td><td><a href="{{ url_for('device_page', ip=device.ip) }}">Inspect →</a></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><h2>{{ 'No matching devices' if total else 'Your inventory starts here' }}</h2><p>{{ 'Try another search or clear the filters.' if total else 'Run a simulation to discover source devices, or configure NSM_DEVICE_INVENTORY_FILE with your asset inventory.' }}</p>{% if total %}<a href="/devices">Clear filters →</a>{% endif %}</div>{% endif %}
+</section>
+{% endblock %}

@@ -24,6 +24,10 @@ class ThreatIntelService:
         incidents: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         value = str(indicator).strip()
+        if not value:
+            raise ValueError("Enter an indicator to look up.")
+        if len(value) > 2048:
+            raise ValueError("Indicators must be 2048 characters or fewer.")
         resolved_type = self._resolve_indicator_type(value, indicator_type)
         related_alerts = self._match_records(value, resolved_type, alerts or [])
         related_incidents = self._match_records(value, resolved_type, incidents or [])
@@ -115,7 +119,13 @@ class ThreatIntelService:
     @staticmethod
     def _resolve_indicator_type(indicator: str, indicator_type: str) -> str:
         raw = str(indicator_type).strip().lower()
-        if raw in {"ip", "domain", "url"}:
+        if raw == "ip":
+            try:
+                ipaddress.ip_address(indicator)
+            except ValueError as exc:
+                raise ValueError("Enter a valid IPv4 or IPv6 address for the IP indicator type.") from exc
+            return raw
+        if raw in {"domain", "url"}:
             return raw
         try:
             ipaddress.ip_address(indicator)

@@ -24,3 +24,6 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 include = ["network_security_monitor*", "api*"]
+
+[tool.setuptools.package-data]
+api = ["templates/*.html", "static/*.css", "static/*.js"]

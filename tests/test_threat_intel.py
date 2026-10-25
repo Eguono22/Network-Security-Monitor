@@ -17,3 +17,18 @@ class TestThreatIntelService:
         assert payload["indicator_type"] == "domain"
         assert payload["verdict"] == "suspicious"
         assert "phishing-keyword" in payload["tags"]
+
+
+def test_lookup_rejects_invalid_explicit_ip():
+    import pytest
+
+    with pytest.raises(ValueError, match="valid IPv4 or IPv6"):
+        ThreatIntelService().lookup("not-an-address", indicator_type="ip")
+
+
+def test_lookup_rejects_empty_and_oversized_indicators():
+    import pytest
+
+    for indicator in (" ", "a" * 2049):
+        with pytest.raises(ValueError):
+            ThreatIntelService().lookup(indicator)

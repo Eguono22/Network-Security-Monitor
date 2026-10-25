@@ -1288,3 +1288,35 @@ class TestApiRoutes:
             else:
                 os.environ["VERCEL"] = prior_vercel
             shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def test_dashboard_loads_alert_data_and_assets(monkeypatch, tmp_path):
+    pytest.importorskip("flask")
+    from api.index import app
+
+    alert = {
+        "timestamp": 1775344876.0,
+        "severity": "HIGH",
+        "threat_type": "PORT_SCAN",
+        "src_ip": "10.0.0.99",
+        "description": "</script><script>alert('unsafe')</script>",
+        "raw": "Port scan detected",
+    }
+    alerts_path = tmp_path / "alerts.jsonl"
+    alerts_path.write_text(json.dumps(alert) + "\n", encoding="utf-8")
+    monkeypatch.setenv("NSM_ALERTS_DATA_FILE", str(alerts_path))
+    client = app.test_client()
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Network overview" in page
+    initial_data = page.split('<script id="initial-alerts" type="application/json">')[1].split("</script>")[0]
+    assert json.loads(initial_data) == [alert]
+    assert "</script><script>alert" not in page
+    for path, content_type in (
+        ("/static/dashboard.css", "text/css"),
+        ("/static/dashboard.js", "text/javascript"),
+    ):
+        asset = client.get(path)
+        assert asset.status_code == 200
+        assert content_type in asset.content_type
