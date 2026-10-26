@@ -140,6 +140,10 @@ def collector(config, *, duration=0, simulate=False):
         for port in range(1, cfg.PORT_SCAN_THRESHOLD + 3):
             monitor.process_packet(Packet(timestamp=time.time(), src_ip="192.0.2.99", dst_ip="192.0.2.1", protocol="TCP", src_port=55000, dst_port=port, size=60, flags="SYN"))
         return {"mode": "simulation", "verification_id": run, "packets": monitor.get_stats().total_packets, "alerts": monitor.get_alert_manager().get_stats()["total"]}
+    # Root startup on this Mac crashed inside the optional native pickle cache.
+    # Load static protocol data directly; the collector does not need disk caches.
+    import scapy.main
+    scapy.main.SCAPY_CACHE_FOLDER = None
     from scapy.all import conf
     socket = conf.L2listen(iface=config["interface"], promisc=False)
     socket.close()  # Fail immediately if the interface or capture privileges are missing.

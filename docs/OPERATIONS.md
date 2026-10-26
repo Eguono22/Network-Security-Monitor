@@ -22,6 +22,22 @@ code from the user-writable checkout. Its configuration is readable only by root
 `launchd` starts it at boot and restarts it on failure. macOS administrator
 authorization is required to install it and open packet-capture devices.
 
+After approved private collector/backup configuration is prepared:
+
+```bash
+python deploy/macos/prepare.py
+python deploy/macos/install_user_jobs.py --jobs backup uptime
+python deploy/macos/install_collector.py
+```
+
+The privileged installer stages the approved runtime in a protected temporary
+folder before requesting native macOS authorization. This avoids privileged reads
+from the Documents folder without changing privacy settings. Temporary installer
+credentials are removed after installation. The collector disables Scapy's optional
+disk cache because initial root startup on this host crashed in native pickle cache
+creation; protocol data loads directly instead.
+
+
 The daily backup and five-minute readiness jobs run as the current user from a
 self-contained runtime in `~/Library/Application Support/SentinelNet`. Daily
 backups are scheduled for 03:15 local host time. Local jobs depend on the Mac being

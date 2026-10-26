@@ -15,6 +15,17 @@ base = Path.home() / "Library" / "Application Support" / "SentinelNet"
 for kind in args.jobs:
     if not (source / "ops" / (kind + ".json")).exists():
         parser.error("Private configuration is not ready for " + kind)
+if "backup" in args.jobs and (base / "ops" / "backup.key").exists():
+    if (base / "ops" / "backup.key").read_bytes() != (source / "ops" / "backup.key").read_bytes():
+        parser.error("Backup keys differ; preserve the existing key before reinstalling")
+agents = Path.home() / "Library" / "LaunchAgents"
+restart = set(args.jobs)
+for kind in ("uptime", "backup"):
+    existing = agents / ("com.sentinelnet." + kind + ".plist")
+    if existing.exists():
+        result = subprocess.run(["launchctl", "bootout", "gui/" + str(os.getuid()), str(existing)], capture_output=True)
+        if result.returncode == 0:
+            restart.add(kind)
 base.mkdir(parents=True, exist_ok=True, mode=0o700)
 for name in ("runtime", "app"):
     shutil.copytree(source / "host" / name, base / name, dirs_exist_ok=True)
@@ -35,6 +46,7 @@ for kind in args.jobs:
     plist = agents / ("com.sentinelnet." + kind + ".plist")
     shutil.copyfile(source / "macos-service" / plist.name, plist)
     plist.chmod(0o644)
-    subprocess.run(["launchctl", "bootout", "gui/" + str(os.getuid()), str(plist)], capture_output=True)
+for kind in sorted(restart):
+    plist = agents / ("com.sentinelnet." + kind + ".plist")
     subprocess.run(["launchctl", "bootstrap", "gui/" + str(os.getuid()), str(plist)], check=True)
     print("Installed current-user job:", kind)

@@ -80,3 +80,35 @@ def test_simulated_alerts_carry_verification_context(tmp_path):
     records = [json.loads(line) for line in Path(config.ALERTS_DATA_FILE).read_text().splitlines()]
     assert records[0]["metadata"]["verification_id"] == "acceptance"
     assert records[0]["description"].startswith("[SIMULATION]")
+
+
+def test_privileged_installer_stages_outside_checkout(tmp_path):
+    import shutil
+    from deploy.macos.install_collector import stage_bundle
+    root = tmp_path / "Documents" / "Project With Spaces"
+    service = root / ".runtime" / "macos-service"
+    service.mkdir(parents=True)
+    host = root / ".runtime" / "host"
+    for name in ("runtime", "app"):
+        (host / name).mkdir(parents=True)
+        (host / name / "marker").write_text("installation payload")
+    config = service / "collector.json"
+    config.write_text('{"database_url":"private-placeholder"}')
+    config.chmod(0o600)
+    (service / "com.sentinelnet.collector.plist").write_text("placeholder")
+    (service / "install.sh").write_text("#!/bin/sh\nSTAGE='" + str(service) + "'\nHOST='" + str(host) + "'\n")
+    bundle = stage_bundle(root)
+    try:
+        assert root not in bundle.parents
+        assert str(root) not in (bundle / "install.sh").read_text()
+        assert stat.S_IMODE(bundle.stat().st_mode) == 0o700
+        assert stat.S_IMODE((bundle / "collector.json").stat().st_mode) == 0o600
+        assert (bundle / "runtime" / "marker").read_text() == "installation payload"
+    finally:
+        shutil.rmtree(bundle)
+
+
+def test_collector_install_requires_prepared_credentials(tmp_path):
+    from deploy.macos.install_collector import stage_bundle
+    with pytest.raises(ValueError, match="approved collector credentials"):
+        stage_bundle(tmp_path)
