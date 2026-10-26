@@ -94,3 +94,11 @@ def test_import_is_idempotent_and_preserves_existing_changes(postgres_runtime, t
     IncidentManager().update_case("INC-IMPORT", status="resolved")
     import_data(incidents_path=str(path))
     assert IncidentManager().get_case("INC-IMPORT")["status"] == "resolved"
+
+
+def test_vercel_database_url_is_accepted(postgres_runtime, monkeypatch):
+    from network_security_monitor.incident_manager import IncidentManager
+    monkeypatch.delenv("NSM_DATABASE_URL")
+    monkeypatch.setenv("DATABASE_URL", postgres_runtime)
+    case = IncidentManager().create_case(alert())
+    assert IncidentManager().get_case(case["incident_id"])["src_ip"] == "10.0.0.99"

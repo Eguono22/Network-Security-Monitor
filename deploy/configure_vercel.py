@@ -40,4 +40,4 @@ for name, value in values.items():
         parser.exit(1, f"Could not configure {name}. Secret values have been withheld.\n")
     print("Configured", name, "for", args.environment, flush=True)
 if "NSM_DATABASE_URL" not in values:
-    print("Database URL not supplied. Preview remains unavailable until database configuration is completed.")
+    print("Database variables were not changed. Readiness requires a connected PostgreSQL database.")

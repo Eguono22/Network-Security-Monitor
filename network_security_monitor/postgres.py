@@ -22,9 +22,9 @@ def postgres_enabled() -> bool:
 def connect():
     import psycopg
     from psycopg.rows import dict_row
-    url = os.getenv("NSM_DATABASE_URL", "")
+    url = os.getenv("NSM_DATABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL", "")
     if not url:
-        raise ValueError("NSM_DATABASE_URL is required for PostgreSQL storage")
+        raise ValueError("NSM_DATABASE_URL or a Vercel PostgreSQL connection URL is required")
     parsed = urlsplit(url)
     if parsed.scheme not in {"postgres", "postgresql"}:
         raise ValueError("NSM_DATABASE_URL must be a PostgreSQL URL")
