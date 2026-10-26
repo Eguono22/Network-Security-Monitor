@@ -154,9 +154,9 @@ class Config:
     # are imported automatically when the sibling database is first created.
     INCIDENTS_LOG_FILE: str = "incidents.db"
     SOC_AUTOMATION_AUTO_CONTAIN_CRITICAL: bool = False
-    # API/UI role defaults. Existing local behavior stays permissive unless this
-    # is overridden by environment or an upstream proxy injects X-NSM-Role.
-    API_DEFAULT_ROLE: str = "admin"
+    # Used only for explicit loopback development bypass. Signed-in users receive
+    # their role from the server-managed account configuration.
+    API_DEFAULT_ROLE: str = "viewer"
     DEVICE_INVENTORY_FILE: str = ""
     UNAUTHORIZED_DEVICES_FILE: str = "unauthorized_devices.jsonl"
     TOPOLOGY_FILE: str = ""

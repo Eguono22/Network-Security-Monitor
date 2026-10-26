@@ -20,3 +20,15 @@ siem/
 tuning*.json
 incidents*.jsonl
 incidents*.db
+
+.venv/
+.runtime/
+.vercel/
+.env.*
+!.env.example
+!.env.vercel.example
+playwright-report/
+.vercel
+.env*
+
+public/static/

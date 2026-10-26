@@ -13,7 +13,7 @@
     try {
       const response = await fetch(form.dataset.endpoint, {
         method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''},
         body: JSON.stringify(Object.fromEntries(new FormData(form))),
       });
       const payload = await response.json();

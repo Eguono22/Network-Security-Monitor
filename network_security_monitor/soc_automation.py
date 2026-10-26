@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 from .config import Config
 from .incident_manager import IncidentManager
 from .models import Alert, AlertSeverity, ThreatType
-from .storage import JsonlStore
+from .storage import JsonlStore, event_store
 
 _SEVERITY_RANK = {
     AlertSeverity.LOW: 0,
@@ -28,7 +28,7 @@ class SOCAutomationEngine:
     def __init__(self, config: Config | None = None):
         self._cfg = config or Config()
         self._incident_manager = IncidentManager(self._cfg.INCIDENTS_LOG_FILE)
-        self._action_store = JsonlStore(self._cfg.SOC_AUTOMATION_LOG_FILE)
+        self._action_store = event_store(self._cfg.SOC_AUTOMATION_LOG_FILE, "soc_actions")
         self._cooldowns: Dict[Tuple[str, str], float] = {}
         self._counts: Dict[str, int] = {"executions": 0, "actions": 0, "suppressed": 0}
 

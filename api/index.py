@@ -9,9 +9,12 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from io import StringIO
+from pathlib import Path
 from urllib.parse import urlencode
 
-from flask import Flask, Response, jsonify, redirect, request, render_template
+import psycopg
+
+from flask import Flask, Response, jsonify, redirect, request, render_template, g
 
 from network_security_monitor.incident_manager import (
     ACTIVE_INCIDENT_STATUSES,
@@ -24,12 +27,24 @@ from network_security_monitor.unauthorized_devices import (
     UnauthorizedDeviceValidationError,
 )
 from network_security_monitor.network_topology import NetworkTopologyService
-from network_security_monitor.storage import AlertRepository, JsonlStore, ReadOnlyStoreError
+from network_security_monitor.storage import AlertRepository, JsonlStore, ReadOnlyStoreError, event_store
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
+from network_security_monitor.auth import install_auth, csrf_token
+from network_security_monitor.postgres import postgres_enabled
 
 
-app = Flask(__name__)
+_WEB_ROOT = Path(__file__).resolve().parent.parent / "network_security_monitor" / "web"
+app = Flask(__name__, template_folder=str(_WEB_ROOT / "templates"), static_folder=str(_WEB_ROOT / "static"))
+install_auth(app)
+
+
+@app.errorhandler(psycopg.Error)
+def database_unavailable(error):
+    app.logger.error("Database operation failed: %s", type(error).__name__)
+    if request.path.startswith("/api/"):
+        return jsonify(error="storage_unavailable", message="Storage is temporarily unavailable."), 503
+    return render_template("error.html", message="Storage is temporarily unavailable. Please retry shortly."), 503
 
 _MAX_RECENT = 100
 _VALID_API_ROLES = ("viewer", "analyst", "admin")
@@ -52,7 +67,7 @@ def _serverless_read_only_enabled() -> bool:
     explicit = os.getenv("NSM_SERVERLESS_READ_ONLY")
     if explicit is not None:
         return _env_bool("NSM_SERVERLESS_READ_ONLY")
-    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV")) and not postgres_enabled()
 
 
 def _read_only_mode_error() -> tuple[Response, int]:
@@ -73,12 +88,14 @@ def _normalize_role(value) -> str:
 
 
 def _current_role() -> str:
-    header_value = request.headers.get("X-NSM-Role", "")
+    if not getattr(g, "auth_disabled", False):
+        return (getattr(g, "user", None) or {}).get("role", "")
+    # Header overrides are explicitly opt-in and available only in local development.
+    header_value = request.headers.get("X-NSM-Role", "") if _env_bool("NSM_TRUST_ROLE_HEADER") else ""
     role = _normalize_role(header_value)
     if header_value and not role:
         return ""
-    default_role = _normalize_role(Config().API_DEFAULT_ROLE)
-    return role or default_role or "admin"
+    return role or _normalize_role(Config().API_DEFAULT_ROLE) or "viewer"
 
 
 def _role_allowed(current_role: str, minimum_role: str) -> bool:
@@ -160,7 +177,7 @@ def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
 
 
 def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
-    store = JsonlStore(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+    store = event_store(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"), "soc_actions")
     return store.read_recent(limit)
 
 
@@ -525,6 +542,25 @@ def health():
     return jsonify({"ok": True})
 
 
+@app.get("/ready")
+def ready():
+    try:
+        from network_security_monitor.auth import load_users
+        from network_security_monitor.auth import auth_disabled
+        if not auth_disabled(app):
+            if len(app.config.get("SECRET_KEY") or "") < 32:
+                raise ValueError("Missing signing key")
+            load_users()
+        if postgres_enabled():
+            from network_security_monitor.postgres import connect
+            with connect() as conn:
+                for table in ("incidents", "events", "device_reviews", "auth_attempts", "change_audit"):
+                    conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+        return jsonify(ready=True)
+    except Exception:
+        return jsonify(ready=False), 503
+
+
 @app.get("/api/alerts")
 def api_alerts():
     return jsonify(
@@ -720,6 +756,8 @@ def api_unauthorized_device_update(ip: str):
     if _serverless_read_only_enabled():
         return _read_only_mode_error()
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(error="invalid_payload", message="A JSON object is required."), 400
     allowed = {"status", "notes", "owner"}
     changes = {key: value for key, value in payload.items() if key in allowed}
     try:
@@ -731,6 +769,7 @@ def api_unauthorized_device_update(ip: str):
             status=changes.get("status"),
             notes=changes.get("notes"),
             owner=changes.get("owner"),
+            reviewed_by=(getattr(g, "user", None) or {}).get("username", "local-development"),
         )
     except UnauthorizedDeviceValidationError as exc:
         return jsonify({"error": "invalid_unauthorized_device_update", "message": str(exc)}), 400
@@ -765,6 +804,8 @@ def api_incident_update(incident_id: str):
         return _read_only_mode_error()
     manager = _incident_manager()
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(error="invalid_payload", message="A JSON object is required."), 400
     allowed = {
         "status",
         "queue",
@@ -774,6 +815,7 @@ def api_incident_update(incident_id: str):
         "metadata",
     }
     changes = {key: value for key, value in payload.items() if key in allowed}
+    changes["updated_by"] = (getattr(g, "user", None) or {}).get("username", "local-development")
     try:
         updated = manager.update_case(incident_id, **changes)
     except IncidentValidationError as exc:
@@ -826,6 +868,7 @@ def soc_management_incident_update(incident_id: str):
     allowed = ("status", "queue", "assignee", "owner", "notes")
     changes = {key: request.form.get(key, "").strip() for key in allowed if request.form.get(key) is not None}
     changes = {key: value for key, value in changes.items() if value}
+    changes["updated_by"] = (getattr(g, "user", None) or {}).get("username", "local-development")
 
     message = ""
     error = ""
@@ -948,7 +991,11 @@ def soc_management():
     selected_id = request.args.get("incident_id", "").strip()
     message = request.args.get("message", "").strip()
     error = request.args.get("error", "").strip()
-    incidents = manager.list_cases(limit=100, **filters)
+    try:
+        incidents = manager.list_cases(limit=100, **filters)
+    except IncidentValidationError as exc:
+        error = str(exc)
+        incidents = []
     unauthorized_findings = unauthorized_manager.list_findings(
         inventory=inventory,
         alerts=_load_recent_alerts(limit=1000),
@@ -1032,6 +1079,7 @@ def soc_management():
         if can_update:
             update_section = f"""
         <form method="post" action="/soc-management/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}/update" class="update-form">
+          <input type="hidden" name="csrf_token" value="{csrf_token() if not getattr(g, 'auth_disabled', False) else ''}" />
           <input type="hidden" name="incident_id" value="{html.escape(str(selected_incident.get('incident_id', '')))}" />
           <input type="hidden" name="filter_status" value="{html.escape(filters['status'])}" />
           <input type="hidden" name="filter_severity" value="{html.escape(filters['severity'])}" />

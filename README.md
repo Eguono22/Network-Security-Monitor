@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-158%20passed-2ea44f)
+![Tests](https://github.com/Eguono22/Network-Security-Monitor/actions/workflows/ci.yml/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -126,6 +126,19 @@ nsm --live --interface eth0 --live-duration 1800
 
 ### API / Dashboard
 
+Provision an account and configure web authentication before starting the app:
+
+```bash
+python -m network_security_monitor.admin create-user emmanuel --role admin
+export NSM_USERS_FILE=.runtime/users.json
+export NSM_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export NSM_COOKIE_SECURE=false  # localhost HTTP only
+```
+
+The app now requires login by default. Server-verified accounts determine roles;
+client role headers cannot elevate signed-in users. For production authentication,
+PostgreSQL, Vercel, backups, and rollback, follow [the release runbook](docs/RELEASE_RUNBOOK.md).
+
 Start the local web app after installing dependencies:
 
 ```bash
@@ -216,10 +229,11 @@ JSONL records over parsing `alerts.log`.
 
 SOC access control:
 
-- Set `NSM_API_DEFAULT_ROLE` to `viewer`, `analyst`, or `admin`
-- Override the effective role per request with the `X-NSM-Role` header
-- `viewer` is read-only for SOC views
-- `analyst` and `admin` can update incidents and export CSV
+- Provision accounts with `python -m network_security_monitor.admin create-user`
+- Roles are `viewer`, `analyst`, and `admin`, stored with password hashes
+- `viewer` is read-only; `analyst` and `admin` can update incidents and export CSV
+- Signed sessions, CSRF protection, and login throttling protect the web interface
+- `X-NSM-Role` overrides require explicit local development mode and are ignored for authenticated sessions
 
 Device inventory:
 
@@ -609,9 +623,7 @@ On Windows with the project virtual environment:
 .\.venv\Scripts\python.exe -m pytest tests\ -v
 ```
 
-Current verified result in this repository:
-
-- `158 passed`
+The release runbook describes the security, PostgreSQL, and browser acceptance suites.
 
 ---
 

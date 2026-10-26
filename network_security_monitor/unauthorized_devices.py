@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from .device_inventory import DeviceInventoryService
-from .storage import JsonlStore, ReadOnlyStoreError
+from .storage import JsonlStore, ReadOnlyStoreError, event_store
 
 VALID_UNAUTHORIZED_DEVICE_STATUSES = ("new", "investigating", "approved", "blocked")
 
@@ -19,7 +19,7 @@ class UnauthorizedDeviceManager:
     """Tracks unmanaged observed assets and their review lifecycle."""
 
     def __init__(self, path: str = "unauthorized_devices.jsonl", *, read_only: bool = False):
-        self._store = JsonlStore(path, read_only=read_only)
+        self._store = event_store(path, "device_reviews", read_only=read_only)
 
     def list_findings(
         self,
@@ -52,6 +52,7 @@ class UnauthorizedDeviceManager:
                 "status": state.get("status", "new"),
                 "notes": state.get("notes", ""),
                 "owner": state.get("owner", ""),
+                "reviewed_by": state.get("reviewed_by", ""),
                 "reviewed_at": state.get("reviewed_at"),
                 "updated_at": state.get("updated_at"),
                 "observation_status": "observed" if device is not None else "cleared",
@@ -152,6 +153,7 @@ class UnauthorizedDeviceManager:
         status: str | None = None,
         notes: str | None = None,
         owner: str | None = None,
+        reviewed_by: str = "",
     ) -> dict[str, Any] | None:
         if self._store.read_only:
             raise ReadOnlyStoreError(f"unauthorized device store is read-only: {self._store.path}")
@@ -182,6 +184,7 @@ class UnauthorizedDeviceManager:
         self._store.append(
             {
                 "ip": updated["ip"],
+                "reviewed_by": reviewed_by,
                 "status": updated["status"],
                 "notes": updated.get("notes", ""),
                 "owner": updated.get("owner", ""),

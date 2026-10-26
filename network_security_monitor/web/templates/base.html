@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SentinelNet · {% block title %}Security overview{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  {% if authentication_enabled %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
   {% block scripts %}{% endblock %}
 </head>
 <body>
@@ -21,7 +22,7 @@
     <div class="sidebar-bottom"><span class="dot"></span> Security operations<br><small>Visibility. Detection. Response.</small></div>
   </aside>
   <main>
-    <header><span>WORKSPACE <span class="slash">/</span> {% block breadcrumb %}Overview{% endblock %}</span><a href="/">Workspace home ↗</a></header>
+    <header><span>WORKSPACE <span class="slash">/</span> {% block breadcrumb %}Overview{% endblock %}</span><div class="account-actions"><a href="/">Workspace home ↗</a>{% if signed_in_user %}<span>{{ signed_in_user.username }} · {{ signed_in_user.role }}</span><form action="/logout" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Sign out</button></form>{% endif %}</div></header>
     {% block content %}{% endblock %}
     <footer>SentinelNet <span>Stored telemetry · This view does not start packet capture</span></footer>
   </main>
