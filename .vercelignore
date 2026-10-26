@@ -9,3 +9,8 @@ __pycache__
 *.db
 *.log
 tests
+
+.agents
+.codex
+.aws
+skills-lock.json
