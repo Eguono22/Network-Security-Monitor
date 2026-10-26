@@ -1,7 +1,7 @@
 # Network Security Monitoring System (NSMS)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-158%20passed-2ea44f)
+![Tests](https://github.com/Eguono22/Network-Security-Monitor/actions/workflows/ci.yml/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0f766e)
 ![Runtime](https://img.shields.io/badge/runtime-CLI%20%2B%20Flask%20API-1d4ed8)
 
@@ -126,6 +126,64 @@ nsm --live --interface eth0 --live-duration 1800
 
 ### API / Dashboard
 
+Provision an account and configure web authentication before starting the app:
+
+```bash
+python -m network_security_monitor.admin create-user emmanuel --role admin
+export NSM_USERS_FILE=.runtime/users.json
+export NSM_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export NSM_COOKIE_SECURE=false  # localhost HTTP only
+```
+
+The app now requires login by default. Server-verified accounts determine roles;
+client role headers cannot elevate signed-in users. For production authentication,
+PostgreSQL, Vercel, backups, and rollback, follow [the release runbook](docs/RELEASE_RUNBOOK.md).
+
+Start the local web app after installing dependencies:
+
+```bash
+python -m flask --app api.index run --debug
+```
+
+Open `http://127.0.0.1:5000/` for the workspace home, guided first-run steps,
+and current data readiness. It shows available alert, incident, inventory, and
+zone data with direct links into each workflow.
+
+Open `http://127.0.0.1:5000/dashboard` for the SentinelNet overview. It includes
+severity summaries, detection breakdowns, search, severity filters, and alert
+evidence details. Stored alerts refresh every 15 seconds while the tab is visible.
+
+Open `http://127.0.0.1:5000/devices` to search assets by IP, hostname, vendor,
+OS, or tag and filter by risk or management status. Select an asset to inspect
+its profile and linked incidents. Analysts and admins can save the review
+status, owner, and notes for unmanaged devices; read-only deployments show
+review context without edit controls. Review status tracks analyst decisions;
+marking a device blocked does not change network or firewall settings.
+
+Open `http://127.0.0.1:5000/network-watcher` to inspect top alert sources,
+network zones, and observed cross-zone paths. Filter paths to review missing or
+disallowed policies. The view refreshes stored telemetry every 15 seconds;
+it does not measure packet rate or start capture. Set `NSM_TOPOLOGY_FILE` to
+configure zone CIDRs and directional allow policies. Path observations combine
+alerts and incidents, which can describe the same underlying event.
+
+Open `http://127.0.0.1:5000/soc-management` for the analyst workspace. Filter
+cases by status, severity, queue, source, threat, assignee, or owner; select a
+case to inspect its evidence and update its lifecycle. The queue shows all
+loaded matches (up to 100), newest first. Analyst and admin roles can export
+filtered cases to CSV; updates also require a writable deployment.
+
+Open `http://127.0.0.1:5000/threat-intel` to look up IPs, domains, and URLs.
+Device profiles link directly to IP lookups. Results show local watchlist and
+heuristic signals, related detection counts, and signal provenance. This is
+local demo enrichment, not an external reputation feed; confidence and risk
+scores are deterministic heuristics. Lookups require viewer access or higher.
+To populate an empty dashboard, run the simulation in another terminal:
+
+```bash
+python -m network_security_monitor --simulate --no-dashboard
+```
+
 The repository includes a Flask-based entrypoint for lightweight API and
 dashboard views, including Vercel-compatible serverless deployment for
 read-only monitoring surfaces.
@@ -142,7 +200,10 @@ Available routes:
 - `GET /`
 - `GET /health`
 - `GET /dashboard`
+- `GET /devices`
+- `GET /devices/<ip>`
 - `GET /network-watcher`
+- `GET /threat-intel`
 - `GET /soc-management`
 - `GET /api/alerts`
 - `GET /api/network-watcher`
@@ -168,10 +229,11 @@ JSONL records over parsing `alerts.log`.
 
 SOC access control:
 
-- Set `NSM_API_DEFAULT_ROLE` to `viewer`, `analyst`, or `admin`
-- Override the effective role per request with the `X-NSM-Role` header
-- `viewer` is read-only for SOC views
-- `analyst` and `admin` can update incidents and export CSV
+- Provision accounts with `python -m network_security_monitor.admin create-user`
+- Roles are `viewer`, `analyst`, and `admin`, stored with password hashes
+- `viewer` is read-only; `analyst` and `admin` can update incidents and export CSV
+- Signed sessions, CSRF protection, and login throttling protect the web interface
+- `X-NSM-Role` overrides require explicit local development mode and are ignored for authenticated sessions
 
 Device inventory:
 
@@ -561,9 +623,7 @@ On Windows with the project virtual environment:
 .\.venv\Scripts\python.exe -m pytest tests\ -v
 ```
 
-Current verified result in this repository:
-
-- `158 passed`
+The release runbook describes the security, PostgreSQL, and browser acceptance suites.
 
 ---
 

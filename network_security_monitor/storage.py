@@ -161,6 +161,9 @@ class AlertRepository:
         self._log_store = AlertLogStore(log_path)
 
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
+        from .postgres import PostgresEventStore, postgres_enabled
+        if postgres_enabled():
+            return PostgresEventStore("alerts").read_recent(limit)
         if self._structured_store is not None:
             alerts = self._structured_store.read_recent(limit)
             if alerts:
@@ -569,3 +572,13 @@ class IncidentStore(JsonlStore):
 
 class ReadOnlyStoreError(RuntimeError):
     """Raised when write operations are attempted in read-only mode."""
+
+
+def event_store(path: str, stream: str, *, read_only: bool = False):
+    """Select durable event storage without changing monitoring call sites."""
+    from .postgres import PostgresEventStore, postgres_enabled
+    if postgres_enabled():
+        return PostgresEventStore(stream, read_only=read_only)
+    if stream == "alerts":
+        return AlertStore(path, read_only=read_only)
+    return JsonlStore(path, read_only=read_only)

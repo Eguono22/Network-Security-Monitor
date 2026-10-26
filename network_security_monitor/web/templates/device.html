@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ device.hostname or device.ip if device else 'Device not found' }}{% endblock %}
+{% block breadcrumb %}<a href="/devices">Device inventory</a> / {{ device.ip if device else 'Not found' }}{% endblock %}
+{% block scripts %}{% if device and finding %}<script src="{{ url_for('static', filename='device.js') }}" defer></script>{% endif %}{% endblock %}
+{% block content %}
+{% if not device %}
+<section class="heading"><div><h1>Device not found</h1><p>This address has no asset record in the current inventory or telemetry sample.</p><a href="/devices">Return to inventory →</a></div></section>
+{% else %}
+<section class="heading"><div><div class="eyebrow">ASSET CONTEXT</div><h1>{{ device.hostname or device.ip }}</h1><p>{{ device.ip }} · {{ 'Managed asset' if device.managed else 'Unmanaged observed asset' }}</p></div><div><a href="/devices">← All devices</a><br><a class="intel-device-link" href="{{ url_for('threat_intel_page', indicator=device.ip, type='ip') }}">Look up intelligence →</a></div></section>
+<section class="metrics" aria-label="Device summary"><article><span>Risk rating</span><strong class="{{ 'critical-text' if device.risk_level in ['critical', 'high'] else '' }}">{{ device.risk_score }}<small> / 100</small></strong><small>{{ device.risk_level|capitalize }} risk</small></article><article><span>Recent alerts</span><strong>{{ device.alert_count }}</strong><small>Source matches in stored telemetry</small></article><article><span>Linked incidents</span><strong>{{ device.incident_count }}</strong><small>Cases involving this source</small></article><article><span>Inventory source</span><strong class="metric-word">{{ 'Seeded' if device.managed else 'Observed' }}</strong><small>{{ device.zone or 'No zone assigned' }}</small></article></section>
+<div class="device-columns">
+<section class="panel context-panel"><h2>Asset profile</h2><dl class="asset-fields">{% for key, value in [('IP address', device.ip), ('Hostname', device.hostname), ('MAC address', device.mac), ('Operating system', device.os), ('Vendor', device.vendor), ('Role', device.role), ('Zone', device.zone), ('Last seen (UTC)', device.last_seen), ('Tags', device.tags|join(', ')), ('Reported / associated ports', device.open_ports|join(', ')), ('Detected threats', device.threat_types|join(', '))] %}<dt>{{ key }}</dt><dd>{{ value or 'Unknown' }}</dd>{% endfor %}</dl></section>
+<section class="panel context-panel"><div class="eyebrow">ASSET SECURITY</div><h2 class="review-title">{{ 'Unmanaged device review' if finding else 'Managed inventory asset' }}</h2>
+{% if finding %}
+<p>This source is absent from the seeded inventory. Record its owner and review status to support triage.</p>
+<p>Review status: <strong id="current-review-status">{{ finding.status|capitalize }}</strong></p>
+{% if can_review %}
+<form id="device-review" action="{{ url_for('api_unauthorized_device_update', ip=device.ip) }}" data-endpoint="{{ url_for('api_unauthorized_device_update', ip=device.ip) }}">
+  <label>Review status<select name="status">{% for status in ['new', 'investigating', 'approved', 'blocked'] %}<option value="{{ status }}" {% if finding.status == status %}selected{% endif %}>{{ status|capitalize }}</option>{% endfor %}</select></label>
+  <label>Owner<input name="owner" value="{{ finding.owner }}" placeholder="Team or analyst"></label>
+  <label>Review notes<textarea name="notes" rows="5" placeholder="Evidence and next steps">{{ finding.notes }}</textarea></label>
+  <p class="review-note">Review status is a tracking record. Selecting “blocked” does not change firewall rules or contain the device.</p>
+  <button type="submit" id="save-review" disabled>Save review</button>
+</form><noscript><p>JavaScript is required to save device reviews.</p></noscript>
+{% else %}<p>{{ 'This deployment is read-only; review changes are disabled.' if read_only else 'An analyst or admin role is required to update reviews.' }}</p><dl class="asset-fields"><dt>Owner</dt><dd>{{ finding.owner or 'Unassigned' }}</dd><dt>Notes</dt><dd>{{ finding.notes or 'No notes yet' }}</dd></dl>{% endif %}
+<p id="review-feedback" role="status" aria-live="polite"></p>
+{% else %}<p>This device is listed in your configured inventory. Asset profile changes are managed through the inventory file.</p>{% endif %}
+</section></div>
+<section class="panel"><div class="panel-heading"><div><h2>Linked incidents</h2><p>Investigate and manage cases associated with this source address.</p></div></div>
+{% if incidents %}<div class="table-scroll"><table><thead><tr><th>Incident</th><th>Severity</th><th>Detection</th><th>Status</th><th>Assignee</th></tr></thead><tbody>{% for case in incidents %}<tr><td><a href="{{ url_for('soc_management', incident_id=case.incident_id) }}">{{ case.incident_id }}</a></td><td><span class="badge {{ case.severity }}">{{ case.severity }}</span></td><td>{{ case.threat_type|replace('_', ' ')|title }}</td><td>{{ case.status|capitalize }}</td><td>{{ case.assignee or 'Unassigned' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><p>No linked incidents in the current telemetry sample.</p></div>{% endif %}</section>
+{% endif %}
+{% endblock %}

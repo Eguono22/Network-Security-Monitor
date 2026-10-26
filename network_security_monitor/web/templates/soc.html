@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}SOC management{% endblock %}
+{% block breadcrumb %}SOC management{% endblock %}
+{% block scripts %}<link rel="stylesheet" href="{{ url_for('static', filename='soc.css') }}">{% endblock %}
+{% block content %}
+{# workspace_html is built entirely by the server; dynamic values are escaped there. #}
+{{ workspace_html|safe }}
+{% endblock %}

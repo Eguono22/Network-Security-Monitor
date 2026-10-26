@@ -1,0 +1,16 @@
+.git
+.venv
+.tmp
+.runtime
+.vscode
+.env*
+__pycache__
+.pytest_cache
+*.db
+*.log
+tests
+
+.agents
+.codex
+.aws
+skills-lock.json

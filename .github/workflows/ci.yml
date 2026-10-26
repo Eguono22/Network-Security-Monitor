@@ -1,28 +1,40 @@
 name: CI
-
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sentinelnet
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: sentinelnet
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinelnet"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NSM_TEST_DATABASE_URL: postgresql://sentinelnet:ci-test-only@127.0.0.1:5432/sentinelnet
+      NSM_RUN_BROWSER_TESTS: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
+      - name: Install dependencies and browser
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-
-      - name: Run tests
-        run: pytest -q
+          python -m pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+      - name: Run unit, PostgreSQL, and browser acceptance tests
+        run: python -m pytest -q
+      - name: Save browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-evidence
+          path: .tmp/release-evidence/

@@ -27,7 +27,8 @@ class IncidentManager:
 
     def __init__(self, path: str = "incidents.db", *, read_only: bool = False):
         self._path = path
-        self._store = IncidentStore(path, read_only=read_only)
+        from .postgres import PostgresIncidentStore, postgres_enabled
+        self._store = PostgresIncidentStore(read_only=read_only) if postgres_enabled() else IncidentStore(path, read_only=read_only)
 
     def create_case(self, alert: Alert, queue: str = "soc-triage") -> dict:
         return self._store.create_case(alert, queue=queue)

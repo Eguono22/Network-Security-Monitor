@@ -13,10 +13,13 @@ dependencies = [
   "colorama>=0.4.4",
   "psutil>=5.9.0",
   "flask>=3.0.0",
+  "psycopg[binary]>=3.2,<4",
+  "gunicorn>=23,<24; sys_platform != 'win32'",
 ]
 
 [project.scripts]
 nsm = "network_security_monitor.cli:run_cli"
+nsm-admin = "network_security_monitor.admin:main"
 nsm-smoke = "network_security_monitor.cli:run_smoke_cli"
 
 [tool.setuptools]
@@ -24,3 +27,12 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 include = ["network_security_monitor*", "api*"]
+
+[tool.setuptools.package-data]
+network_security_monitor = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
+[tool.vercel]
+entrypoint = "api.index:app"
+
+[tool.vercel.scripts]
+build = "python deploy/build_assets.py"

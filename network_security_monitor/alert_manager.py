@@ -15,7 +15,7 @@ from urllib import request
 
 from .config import Config
 from .models import Alert, AlertSeverity, ThreatType
-from .storage import AlertStore
+from .storage import AlertStore, event_store
 
 
 # Map our AlertSeverity levels to Python logging levels.
@@ -55,7 +55,8 @@ class AlertManager:
         self._cfg = config or Config()
         self._history: Deque[Alert] = deque(maxlen=self._cfg.MAX_ALERT_HISTORY)
         self._callbacks: List[Callable[[Alert], None]] = []
-        self._alert_store = AlertStore(self._cfg.ALERTS_DATA_FILE) if self._cfg.ALERTS_DATA_FILE else None
+        from .postgres import postgres_enabled
+        self._alert_store = event_store(self._cfg.ALERTS_DATA_FILE, "alerts") if self._cfg.ALERTS_DATA_FILE or postgres_enabled() else None
         self._logger = self._build_logger()
         self._register_builtin_integrations()
 

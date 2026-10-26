@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block scripts %}
+  <script id="initial-alerts" type="application/json">{{ alerts|tojson }}</script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+    <section class="heading"><div><div class="eyebrow">SECURITY OPERATIONS</div><h1>Network overview</h1><p>Your latest detections, with the context to take action.</p></div><button id="refresh" type="button">↻ Refresh data</button></section>
+    <div class="status" role="status" aria-live="polite"><span class="dot"></span><span id="sync-status">Showing the latest stored alerts</span><span class="status-note">Refreshes every 15 seconds</span></div>
+    <section class="metrics" aria-label="Alert summary">
+      <article><span>Recent alerts</span><strong id="total">0</strong><small>Latest 100 stored records</small></article>
+      <article><span>Critical alerts</span><strong id="critical" class="critical-text">0</strong><small>Prioritize for immediate review</small></article>
+      <article><span>High severity</span><strong id="high" class="high-text">0</strong><small>Investigate suspicious activity</small></article>
+      <article><span>Source addresses</span><strong id="sources">0</strong><small>Distinct sources in this sample</small></article>
+    </section>
+    <section class="insights"><article class="panel"><div class="panel-heading"><h2>Detection breakdown</h2><span>Recent sample</span></div><div id="breakdown"></div></article><article class="panel guidance"><div class="eyebrow">ANALYST WORKFLOW</div><h2>From signal to response</h2><p>Review a detection to understand its source and evidence. Open SOC management to assign, contain, or resolve linked incidents.</p><a href="/soc-management">Open incident workspace →</a></article></section>
+    <section class="panel alerts-panel"><div class="panel-heading"><div><h2>Alert activity</h2><p>Inspect the signals across your network.</p></div><a href="/api/alerts">View JSON ↗</a></div>
+      <div class="filters"><label class="search"><span class="sr-only">Search alerts</span><input id="search" type="search" placeholder="Search source, threat, or description…"></label><label><span class="sr-only">Filter by severity</span><select id="severity"><option value="">All severities</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></label><span id="result-count" aria-live="polite"></span></div>
+      <div class="table-scroll"><table><thead><tr><th>Severity</th><th>Detection</th><th>Source address</th><th>Detected at</th><th>Evidence</th></tr></thead><tbody id="alerts"></tbody></table></div>
+      <div id="empty" hidden><h3>No alerts to display</h3><p id="empty-copy"></p><code id="start-command">python -m network_security_monitor --simulate --no-dashboard</code></div>
+    </section>
+{% endblock %}
+{% block dialogs %}
+  <dialog id="detail"><div class="detail-heading"><h2>Alert details</h2><button id="close-detail" type="button" aria-label="Close alert details">✕</button></div><dl id="detail-fields"></dl><a href="/soc-management">Manage linked incidents →</a></dialog>
+{% endblock %}

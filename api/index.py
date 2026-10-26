@@ -9,9 +9,12 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from io import StringIO
+from pathlib import Path
 from urllib.parse import urlencode
 
-from flask import Flask, Response, jsonify, redirect, request
+import psycopg
+
+from flask import Flask, Response, jsonify, redirect, request, render_template, g
 
 from network_security_monitor.incident_manager import (
     ACTIVE_INCIDENT_STATUSES,
@@ -24,12 +27,24 @@ from network_security_monitor.unauthorized_devices import (
     UnauthorizedDeviceValidationError,
 )
 from network_security_monitor.network_topology import NetworkTopologyService
-from network_security_monitor.storage import AlertRepository, JsonlStore, ReadOnlyStoreError
+from network_security_monitor.storage import AlertRepository, JsonlStore, ReadOnlyStoreError, event_store
 from network_security_monitor.threat_intel import ThreatIntelService
 from network_security_monitor.config import Config
+from network_security_monitor.auth import install_auth, csrf_token
+from network_security_monitor.postgres import postgres_enabled
 
 
-app = Flask(__name__)
+_WEB_ROOT = Path(__file__).resolve().parent.parent / "network_security_monitor" / "web"
+app = Flask(__name__, template_folder=str(_WEB_ROOT / "templates"), static_folder=str(_WEB_ROOT / "static"))
+install_auth(app)
+
+
+@app.errorhandler(psycopg.Error)
+def database_unavailable(error):
+    app.logger.error("Database operation failed: %s", type(error).__name__)
+    if request.path.startswith("/api/"):
+        return jsonify(error="storage_unavailable", message="Storage is temporarily unavailable."), 503
+    return render_template("error.html", message="Storage is temporarily unavailable. Please retry shortly."), 503
 
 _MAX_RECENT = 100
 _VALID_API_ROLES = ("viewer", "analyst", "admin")
@@ -52,7 +67,7 @@ def _serverless_read_only_enabled() -> bool:
     explicit = os.getenv("NSM_SERVERLESS_READ_ONLY")
     if explicit is not None:
         return _env_bool("NSM_SERVERLESS_READ_ONLY")
-    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV")) and not postgres_enabled()
 
 
 def _read_only_mode_error() -> tuple[Response, int]:
@@ -73,12 +88,14 @@ def _normalize_role(value) -> str:
 
 
 def _current_role() -> str:
-    header_value = request.headers.get("X-NSM-Role", "")
+    if not getattr(g, "auth_disabled", False):
+        return (getattr(g, "user", None) or {}).get("role", "")
+    # Header overrides are explicitly opt-in and available only in local development.
+    header_value = request.headers.get("X-NSM-Role", "") if _env_bool("NSM_TRUST_ROLE_HEADER") else ""
     role = _normalize_role(header_value)
     if header_value and not role:
         return ""
-    default_role = _normalize_role(Config().API_DEFAULT_ROLE)
-    return role or default_role or "admin"
+    return role or _normalize_role(Config().API_DEFAULT_ROLE) or "viewer"
 
 
 def _role_allowed(current_role: str, minimum_role: str) -> bool:
@@ -160,7 +177,7 @@ def _load_recent_alerts(limit: int = _MAX_RECENT) -> list[dict]:
 
 
 def _load_soc_actions(limit: int = _MAX_RECENT) -> list[dict]:
-    store = JsonlStore(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"))
+    store = event_store(os.getenv("NSM_SOC_AUTOMATION_LOG_FILE", "soc_actions.log"), "soc_actions")
     return store.read_recent(limit)
 
 
@@ -407,6 +424,20 @@ def _network_watcher_summary() -> dict:
         src, count = by_src.most_common(1)[0]
         top_src = f"{src} ({count})"
 
+    incidents = _load_incidents(limit=1000)
+    devices = _inventory_service().list_devices(alerts=alerts, incidents=incidents, limit=500)
+    topology = _topology_service().summarize(devices=devices, alerts=alerts, incidents=incidents, limit=500)
+    source_details = []
+    for ip, count in by_src.most_common(20):
+        source_alerts = [alert for alert in alerts if alert.get("src_ip") == ip]
+        severities = Counter(alert.get("severity", "UNKNOWN") for alert in source_alerts)
+        source_details.append({
+            "ip": ip, "alert_count": count,
+            "critical_count": severities.get("CRITICAL", 0),
+            "high_count": severities.get("HIGH", 0),
+            "threat_types": sorted({alert.get("threat_type", "UNKNOWN") for alert in source_alerts}),
+        })
+
     now = datetime.now(timezone.utc).isoformat()
     health = "stable"
     if by_severity.get("CRITICAL", 0) > 0:
@@ -422,6 +453,9 @@ def _network_watcher_summary() -> dict:
         "top_source": top_src,
         "alerts_by_severity": dict(by_severity),
         "alerts_by_threat": dict(by_threat),
+        "sources": source_details,
+        "source_count": len(by_src),
+        "topology": topology,
     }
 
 
@@ -485,141 +519,46 @@ def _soc_management_snapshot() -> dict:
 
 @app.get("/")
 def root():
-    html = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Network Security Monitoring System (NSMS)</title>
-  <style>
-    :root {
-      --bg-1: #f4f8ff;
-      --bg-2: #dbeafe;
-      --card: #ffffff;
-      --text: #0f172a;
-      --muted: #334155;
-      --accent: #0b7285;
-      --accent-2: #0f766e;
-      --border: #cbd5e1;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: "Fira Sans", "Trebuchet MS", "Segoe UI", sans-serif;
-      color: var(--text);
-      background:
-        radial-gradient(circle at 15% 20%, rgba(11, 114, 133, 0.14), transparent 34%),
-        radial-gradient(circle at 85% 75%, rgba(15, 118, 110, 0.14), transparent 36%),
-        linear-gradient(145deg, var(--bg-1), var(--bg-2));
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-    .panel {
-      width: min(760px, 100%);
-      background: color-mix(in srgb, var(--card) 88%, #ffffff);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 28px;
-      box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: clamp(1.7rem, 4vw, 2.4rem);
-      letter-spacing: 0.01em;
-    }
-    p {
-      margin: 0 0 18px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-    .badge {
-      display: inline-block;
-      padding: 7px 11px;
-      border-radius: 999px;
-      background: rgba(11, 114, 133, 0.1);
-      color: var(--accent);
-      border: 1px solid rgba(11, 114, 133, 0.25);
-      font-weight: 600;
-      margin-bottom: 14px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-      margin-top: 14px;
-    }
-    .item {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px;
-      background: rgba(255, 255, 255, 0.7);
-    }
-    .item strong { color: var(--accent-2); }
-    code {
-      background: #e2e8f0;
-      padding: 2px 6px;
-      border-radius: 6px;
-    }
-  </style>
-</head>
-<body>
-  <main class="panel">
-    <span class="badge">Serverless API Active</span>
-    <h1>Network Security Monitoring System (NSMS)</h1>
-    <p>
-      This Vercel deployment provides lightweight API endpoints for status and
-      integration checks. Live packet capture is not available in serverless runtime.
-    </p>
-    <div class="grid">
-      <section class="item">
-        <strong>Health Check</strong>
-        <p>Use <code>/health</code> for uptime probes and platform monitoring.</p>
-      </section>
-      <section class="item">
-        <strong>Alert Dashboard</strong>
-        <p>Browse recent alerts at <code>/dashboard</code>.</p>
-      </section>
-      <section class="item">
-        <strong>Network Watcher</strong>
-        <p>View summary at <code>/network-watcher</code> or JSON at <code>/api/network-watcher</code>.</p>
-      </section>
-      <section class="item">
-        <strong>SOC Management</strong>
-        <p>Use <code>/soc-management</code> for KPI and incident queue operations.</p>
-      </section>
-      <section class="item">
-        <strong>Incident API</strong>
-        <p>Query incident cases at <code>/api/incidents</code> or export CSV at <code>/api/incidents/export.csv</code>.</p>
-      </section>
-      <section class="item">
-        <strong>Threat Intel</strong>
-        <p>Enrich an indicator at <code>/api/threat-intel?indicator=1.2.3.4</code>.</p>
-      </section>
-      <section class="item">
-        <strong>Device Inventory</strong>
-        <p>Inspect asset context at <code>/api/devices</code>.</p>
-      </section>
-      <section class="item">
-        <strong>Unauthorized Devices</strong>
-        <p>Review unmanaged observed assets at <code>/api/devices/unauthorized</code>.</p>
-      </section>
-      <section class="item">
-        <strong>Topology</strong>
-        <p>Inspect zones and observed cross-zone paths at <code>/api/topology</code>.</p>
-      </section>
-    </div>
-  </main>
-</body>
-</html>
-"""
-    return Response(html, mimetype="text/html")
+    role, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
+    alerts = _load_recent_alerts(limit=100)
+    incidents = _load_incidents(limit=500)
+    devices = _inventory_service().list_devices(alerts=alerts, incidents=incidents, limit=500)
+    topology = _topology_service().summarize(devices=devices, alerts=alerts, incidents=incidents, limit=500)
+    read_only = _serverless_read_only_enabled()
+    return render_template(
+        "home.html", active_page="home", role=role, read_only=read_only,
+        serverless=bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV")),
+        alert_count=len(alerts), incident_count=len(incidents), device_count=len(devices),
+        managed_count=sum(bool(device.get("managed")) for device in devices),
+        active_count=sum(case.get("status", "open") in ACTIVE_INCIDENT_STATUSES for case in incidents),
+        zone_count=len(topology.get("zones", [])),
+    )
 
 
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
+
+
+@app.get("/ready")
+def ready():
+    try:
+        from network_security_monitor.auth import load_users
+        from network_security_monitor.auth import auth_disabled
+        if not auth_disabled(app):
+            if len(app.config.get("SECRET_KEY") or "") < 32:
+                raise ValueError("Missing signing key")
+            load_users()
+        if postgres_enabled():
+            from network_security_monitor.postgres import connect
+            with connect() as conn:
+                for table in ("incidents", "events", "device_reviews", "auth_attempts", "change_audit"):
+                    conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+        return jsonify(ready=True)
+    except Exception:
+        return jsonify(ready=False), 503
 
 
 @app.get("/api/alerts")
@@ -634,6 +573,9 @@ def api_alerts():
 
 @app.get("/api/network-watcher")
 def api_network_watcher():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
     return jsonify(_network_watcher_summary())
 
 
@@ -664,21 +606,51 @@ def api_soc_summary():
     return jsonify(_soc_management_snapshot())
 
 
+def _lookup_threat_intel(indicator: str, indicator_type: str = "") -> dict:
+    config = Config()
+    return ThreatIntelService(config.KNOWN_MALICIOUS_IPS).lookup(
+        indicator, indicator_type=indicator_type,
+        alerts=_load_recent_alerts(limit=200), incidents=_load_incidents(limit=200),
+    )
+
+
 @app.get("/api/threat-intel")
 def api_threat_intel():
+    _, denial = _require_role("viewer")
+    if denial is not None:
+        return denial
     indicator = request.args.get("indicator", "").strip()
     if not indicator:
         return jsonify({"error": "missing_indicator", "message": "indicator query parameter is required"}), 400
+    try:
+        return jsonify(_lookup_threat_intel(indicator, request.args.get("type", "")))
+    except ValueError as exc:
+        return jsonify({"error": "invalid_indicator", "message": str(exc)}), 400
 
-    config = Config()
-    service = ThreatIntelService(config.KNOWN_MALICIOUS_IPS)
-    payload = service.lookup(
-        indicator,
-        indicator_type=request.args.get("type", ""),
-        alerts=_load_recent_alerts(limit=200),
-        incidents=_load_incidents(limit=200),
-    )
-    return jsonify(payload)
+
+@app.get("/threat-intel")
+def threat_intel_page():
+    _, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
+    indicator = request.args.get("indicator", "").strip()
+    indicator_type = request.args.get("type", "").strip().lower()
+    result = None
+    error = ""
+    status = 200
+    if indicator:
+        try:
+            result = _lookup_threat_intel(indicator, indicator_type)
+        except ValueError as exc:
+            error = str(exc)
+            status = 400
+    elif "indicator" in request.args:
+        error = "Enter an indicator to look up."
+        status = 400
+    return render_template(
+        "threat_intel.html", active_page="intel", indicator=indicator,
+        indicator_type=indicator_type, result=result, error=error,
+    ), status
 
 
 @app.get("/api/incidents")
@@ -784,6 +756,8 @@ def api_unauthorized_device_update(ip: str):
     if _serverless_read_only_enabled():
         return _read_only_mode_error()
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(error="invalid_payload", message="A JSON object is required."), 400
     allowed = {"status", "notes", "owner"}
     changes = {key: value for key, value in payload.items() if key in allowed}
     try:
@@ -795,6 +769,7 @@ def api_unauthorized_device_update(ip: str):
             status=changes.get("status"),
             notes=changes.get("notes"),
             owner=changes.get("owner"),
+            reviewed_by=(getattr(g, "user", None) or {}).get("username", "local-development"),
         )
     except UnauthorizedDeviceValidationError as exc:
         return jsonify({"error": "invalid_unauthorized_device_update", "message": str(exc)}), 400
@@ -829,6 +804,8 @@ def api_incident_update(incident_id: str):
         return _read_only_mode_error()
     manager = _incident_manager()
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify(error="invalid_payload", message="A JSON object is required."), 400
     allowed = {
         "status",
         "queue",
@@ -838,6 +815,7 @@ def api_incident_update(incident_id: str):
         "metadata",
     }
     changes = {key: value for key, value in payload.items() if key in allowed}
+    changes["updated_by"] = (getattr(g, "user", None) or {}).get("username", "local-development")
     try:
         updated = manager.update_case(incident_id, **changes)
     except IncidentValidationError as exc:
@@ -890,6 +868,7 @@ def soc_management_incident_update(incident_id: str):
     allowed = ("status", "queue", "assignee", "owner", "notes")
     changes = {key: request.form.get(key, "").strip() for key in allowed if request.form.get(key) is not None}
     changes = {key: value for key, value in changes.items() if value}
+    changes["updated_by"] = (getattr(g, "user", None) or {}).get("username", "local-development")
 
     message = ""
     error = ""
@@ -932,130 +911,66 @@ def _request_limit(default: int = _MAX_RECENT) -> int:
 
 @app.get("/dashboard")
 def dashboard():
-    alerts = _load_recent_alerts()
-    rows = []
-    for alert in reversed(alerts[-50:]):
-        sev = html.escape(alert["severity"])
-        threat = html.escape(alert["threat_type"])
-        src = html.escape(alert["src_ip"])
-        ts = html.escape(alert["timestamp"])
-        raw = html.escape(alert["raw"])
-        rows.append(
-            "<tr>"
-            f"<td>{ts}</td>"
-            f"<td><strong>{sev}</strong></td>"
-            f"<td>{threat}</td>"
-            f"<td>{src}</td>"
-            f"<td><code>{raw}</code></td>"
-            "</tr>"
-        )
-    if not rows:
-        rows.append(
-            "<tr><td colspan='5'>No alerts found yet. Run monitor and generate alerts first.</td></tr>"
-        )
+    return render_template("dashboard.html", alerts=_load_recent_alerts(), active_page="overview")
 
-    page = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NSM Alert Dashboard</title>
-  <style>
-    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
-    main {{ max-width: 1200px; margin: 24px auto; padding: 0 16px; }}
-    h1 {{ margin: 0 0 8px; }}
-    p {{ color: #334155; }}
-    .card {{ background: #fff; border: 1px solid #dbe4ee; border-radius: 12px; overflow: auto; }}
-    table {{ width: 100%; border-collapse: collapse; min-width: 900px; }}
-    th, td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }}
-    th {{ background: #f1f5f9; }}
-    code {{ white-space: pre-wrap; word-break: break-word; }}
-    .links a {{ margin-right: 12px; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Alert Dashboard</h1>
-    <p>Recent alerts from <code>alerts.log</code>. Showing latest {len(alerts)} parsed records.</p>
-    <p class="links"><a href="/api/alerts">JSON API</a><a href="/network-watcher">Network Watcher</a><a href="/">Home</a></p>
-    <div class="card">
-      <table>
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Severity</th>
-            <th>Threat</th>
-            <th>Source</th>
-            <th>Raw</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(rows)}
-        </tbody>
-      </table>
-    </div>
-  </main>
-</body>
-</html>"""
-    return Response(page, mimetype="text/html")
+
+@app.get("/devices")
+def devices_page():
+    _, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
+    query = request.args.get("q", "").strip()
+    risk = request.args.get("risk_level", "").strip().lower()
+    management = request.args.get("management", "").strip().lower()
+    inventory = _inventory_service()
+    alerts = _load_recent_alerts(limit=1000)
+    incidents = _load_incidents(limit=1000)
+    devices = inventory.list_devices(alerts=alerts, incidents=incidents, limit=500)
+    filtered = inventory.list_devices(
+        alerts=alerts, incidents=incidents, limit=500, query=query, risk_level=risk,
+    )
+    if management in {"managed", "unmanaged"}:
+        filtered = [device for device in filtered if bool(device.get("managed")) == (management == "managed")]
+    return render_template(
+        "devices.html", active_page="devices", devices=filtered,
+        total=len(devices), managed=sum(bool(device.get("managed")) for device in devices),
+        high_risk=sum(device.get("risk_level") in {"high", "critical"} for device in devices),
+        query=query, risk=risk, management=management,
+    )
+
+
+@app.get("/devices/<ip>")
+def device_page(ip: str):
+    role, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
+    alerts = _load_recent_alerts(limit=1000)
+    incidents = _load_incidents(limit=1000)
+    inventory = _inventory_service()
+    device = inventory.get_device(ip, alerts=alerts, incidents=incidents)
+    if device is None:
+        return render_template("device.html", active_page="devices", device=None), 404
+    finding = None
+    if not device.get("managed"):
+        finding = _unauthorized_device_manager().get_finding(
+            ip, inventory=inventory, alerts=alerts, incidents=incidents,
+        )
+    return render_template(
+        "device.html", active_page="devices", device=device, finding=finding,
+        can_review=_role_allowed(role, "analyst") and not _serverless_read_only_enabled(),
+        read_only=_serverless_read_only_enabled(),
+        incidents=[case for case in incidents if case.get("src_ip") == ip],
+    )
 
 
 @app.get("/network-watcher")
 def network_watcher():
-    summary = _network_watcher_summary()
-    by_sev = summary["alerts_by_severity"]
-    by_threat = summary["alerts_by_threat"]
-    sev_lines = "".join(
-        f"<li>{html.escape(str(k))}: <strong>{v}</strong></li>"
-        for k, v in sorted(by_sev.items())
-    ) or "<li>No alert data</li>"
-    threat_lines = "".join(
-        f"<li>{html.escape(str(k))}: <strong>{v}</strong></li>"
-        for k, v in sorted(by_threat.items())
-    ) or "<li>No threat data</li>"
-
-    page = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NSM Network Watcher</title>
-  <style>
-    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
-    main {{ max-width: 980px; margin: 24px auto; padding: 0 16px; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
-    .card {{ background: #fff; border: 1px solid #dbe4ee; border-radius: 12px; padding: 14px; }}
-    h1 {{ margin: 0 0 8px; }}
-    h2 {{ margin: 0 0 8px; font-size: 1.05rem; }}
-    p {{ margin: 6px 0; color: #334155; }}
-    ul {{ margin: 0; padding-left: 18px; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Network Watcher</h1>
-    <p>Health: <strong>{html.escape(str(summary['health']))}</strong> | Updated: {html.escape(str(summary['timestamp_utc']))}</p>
-    <div class="grid">
-      <section class="card">
-        <h2>Recent Totals</h2>
-        <p>Alerts: <strong>{summary['recent_alerts']}</strong></p>
-        <p>SOC Actions: <strong>{summary['recent_soc_actions']}</strong></p>
-        <p>Top Source: <strong>{html.escape(str(summary['top_source']))}</strong></p>
-      </section>
-      <section class="card">
-        <h2>By Severity</h2>
-        <ul>{sev_lines}</ul>
-      </section>
-      <section class="card">
-        <h2>By Threat</h2>
-        <ul>{threat_lines}</ul>
-      </section>
-    </div>
-    <p><a href="/api/network-watcher">JSON API</a> | <a href="/dashboard">Alert Dashboard</a> | <a href="/">Home</a></p>
-  </main>
-</body>
-</html>"""
-    return Response(page, mimetype="text/html")
+    _, denial = _require_role("viewer", page=True)
+    if denial is not None:
+        return denial
+    return render_template(
+        "watcher.html", active_page="watcher", snapshot=_network_watcher_summary(),
+    )
 
 
 @app.get("/soc-management")
@@ -1076,7 +991,11 @@ def soc_management():
     selected_id = request.args.get("incident_id", "").strip()
     message = request.args.get("message", "").strip()
     error = request.args.get("error", "").strip()
-    incidents = manager.list_cases(limit=100, **filters)
+    try:
+        incidents = manager.list_cases(limit=100, **filters)
+    except IncidentValidationError as exc:
+        error = str(exc)
+        incidents = []
     unauthorized_findings = unauthorized_manager.list_findings(
         inventory=inventory,
         alerts=_load_recent_alerts(limit=1000),
@@ -1107,7 +1026,7 @@ def soc_management():
         f"<td>{html.escape(str(i.get('src_ip', 'n/a')))}</td>"
         f"<td>{html.escape(str(i.get('threat_type', 'UNKNOWN')))}</td>"
         "</tr>"
-        for i in reversed(incidents[-15:])
+        for i in reversed(incidents)
     ) or "<tr><td colspan='7'>No incidents matched the current filters.</td></tr>"
     active_filter_count = sum(1 for value in filters.values() if value)
     filter_query = _build_query(filters)
@@ -1160,6 +1079,7 @@ def soc_management():
         if can_update:
             update_section = f"""
         <form method="post" action="/soc-management/incidents/{html.escape(str(selected_incident.get('incident_id', '')))}/update" class="update-form">
+          <input type="hidden" name="csrf_token" value="{csrf_token() if not getattr(g, 'auth_disabled', False) else ''}" />
           <input type="hidden" name="incident_id" value="{html.escape(str(selected_incident.get('incident_id', '')))}" />
           <input type="hidden" name="filter_status" value="{html.escape(filters['status'])}" />
           <input type="hidden" name="filter_severity" value="{html.escape(filters['severity'])}" />
@@ -1261,259 +1181,10 @@ def soc_management():
         <p>Select an incident from the table to inspect it and apply updates.</p>
       </article>"""
 
-    page = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NSM SOC Management</title>
-  <style>
-    :root {{
-      --bg: #0b1220;
-      --panel: #111b2e;
-      --panel-2: #13223a;
-      --text: #e6edf7;
-      --muted: #9cb2cf;
-      --good: #2dd4bf;
-      --warn: #fbbf24;
-      --bad: #fb7185;
-      --line: #274468;
-      --brand: #38bdf8;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.14), transparent 38%),
-        radial-gradient(circle at 85% 100%, rgba(45, 212, 191, 0.12), transparent 35%),
-        var(--bg);
-      font-family: "Segoe UI", "Inter", sans-serif;
-    }}
-    main {{ max-width: 1180px; margin: 20px auto; padding: 0 16px 24px; }}
-    .top {{
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      margin-bottom: 14px;
-    }}
-    .banner {{
-      border-radius: 12px;
-      padding: 12px 14px;
-      margin-bottom: 12px;
-      border: 1px solid var(--line);
-    }}
-    .banner.ok {{ background: rgba(45, 212, 191, 0.12); color: var(--good); }}
-    .banner.err {{ background: rgba(251, 113, 133, 0.12); color: #fecdd3; }}
-    h1 {{ margin: 0; letter-spacing: 0.01em; }}
-    h3, h4 {{ margin: 0 0 10px; }}
-    .meta {{ color: var(--muted); font-size: 0.95rem; }}
-    .role-pill {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      padding: 6px 10px;
-      color: var(--text);
-      background: rgba(56, 189, 248, 0.12);
-      font-size: 0.9rem;
-    }}
-    .kpis {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
-    }}
-    .card {{
-      background: linear-gradient(160deg, var(--panel), var(--panel-2));
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
-    }}
-    .k {{ color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }}
-    .v {{ font-size: 1.55rem; font-weight: 700; margin-top: 4px; }}
-    .v.good {{ color: var(--good); }}
-    .v.warn {{ color: var(--warn); }}
-    .v.bad {{ color: var(--bad); }}
-    .v.info {{ color: var(--brand); }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 12px;
-    }}
-    .workflow-grid {{
-      display: grid;
-      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
-      gap: 12px;
-      margin-top: 12px;
-      align-items: start;
-    }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }}
-    th {{ color: var(--muted); font-weight: 600; }}
-    .links a {{ color: var(--brand); margin-right: 10px; text-decoration: none; }}
-    .links a:hover {{ text-decoration: underline; }}
-    .disabled-link {{
-      color: var(--muted);
-      margin-right: 10px;
-      text-decoration: none;
-      cursor: default;
-    }}
-    .toolbar {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px;
-    }}
-    .toolbar label, .update-form label {{
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }}
-    .toolbar input, .toolbar select, .update-form input, .update-form select, .update-form textarea {{
-      width: 100%;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: rgba(7, 14, 26, 0.35);
-      color: var(--text);
-      padding: 10px 12px;
-      font: inherit;
-    }}
-    .toolbar-actions, .form-actions {{
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }}
-    button, .button-link {{
-      border: 0;
-      border-radius: 999px;
-      padding: 10px 14px;
-      background: linear-gradient(135deg, #0891b2, #0ea5a4);
-      color: white;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
-      text-decoration: none;
-    }}
-    .button-link.secondary {{
-      background: transparent;
-      border: 1px solid var(--line);
-      color: var(--text);
-    }}
-    .section-title {{
-      color: var(--brand);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-size: 0.78rem;
-      margin-bottom: 10px;
-    }}
-    .detail-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
-    }}
-    .detail-grid span {{
-      display: block;
-      color: var(--muted);
-      font-size: 0.82rem;
-      margin-bottom: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }}
-    .detail-description {{ color: var(--text); }}
-    .detail-columns {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-      margin: 12px 0;
-    }}
-    .detail-columns ul {{ margin: 0; padding-left: 18px; color: var(--muted); }}
-    .asset-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 8px;
-      margin-bottom: 10px;
-    }}
-    .asset-grid span {{
-      display: block;
-      color: var(--muted);
-      font-size: 0.8rem;
-      margin-bottom: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }}
-    .asset-list {{
-      margin: 0;
-      padding-left: 18px;
-      color: var(--muted);
-    }}
-    .asset-empty {{
-      color: var(--muted);
-      margin: 0;
-    }}
-    .notes-box {{
-      white-space: pre-wrap;
-      background: rgba(7, 14, 26, 0.35);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 12px;
-      min-height: 74px;
-    }}
-    .update-form {{ margin-top: 14px; }}
-    .read-only-note {{
-      margin-top: 14px;
-      border: 1px dashed var(--line);
-      border-radius: 12px;
-      padding: 12px;
-      color: var(--muted);
-      background: rgba(7, 14, 26, 0.22);
-    }}
-    .form-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px;
-      margin-bottom: 10px;
-    }}
-    .detail-card {{ min-height: 100%; }}
-    .table-meta {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 8px;
-      color: var(--muted);
-      flex-wrap: wrap;
-    }}
-    .metrics-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-    }}
-    .metric-list {{
-      margin: 0;
-      padding-left: 18px;
-      color: var(--muted);
-    }}
-    .trend-text {{
-      color: var(--muted);
-      line-height: 1.5;
-      word-break: break-word;
-    }}
-    @media (max-width: 900px) {{
-      .workflow-grid {{ grid-template-columns: 1fr; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
+    page = f"""<div class="soc-workspace">
     <section class="top">
       <div>
-        <h1>SOC Management Dashboard</h1>
+        <div class="eyebrow">INCIDENT RESPONSE</div><h1>SOC Management Dashboard</h1>
         <div class="meta">Updated: {html.escape(snap["timestamp_utc"])}</div>
         <div class="role-pill">Role: <strong>{html.escape(current_role)}</strong></div>
       </div>
@@ -1521,7 +1192,7 @@ def soc_management():
         <a href="/api/soc-summary">SOC JSON</a>
         <a href="/api/incidents">Incidents JSON</a>
         {f'<a href="/api/incidents/export.csv{f"?{filter_query}" if filter_query else ""}">Incidents CSV</a>' if can_export else '<span class="disabled-link">Incidents CSV (analyst+)</span>'}
-        <a href="/api/devices">Devices JSON</a>
+        <a href="/devices">Device inventory</a>
         <a href="/dashboard">Alerts</a>
         <a href="/network-watcher">Watcher</a>
         <a href="/">Home</a>
@@ -1542,6 +1213,66 @@ def soc_management():
       <article class="card"><div class="k">Topology Violations</div><div class="v warn">{snap['topology_violations']}</div></article>
     </section>
 
+    <section class="card">
+      <div class="section-title">Incident Queue Filters</div>
+      <form method="get" action="/soc-management">
+        <div class="toolbar">
+          <label>Status
+            <select name="status">
+              <option value="">All statuses</option>
+              <option value="active"{_selected_value(filters['status'], 'active')}>active</option>
+              <option value="open"{_selected_value(filters['status'], 'open')}>open</option>
+              <option value="assigned"{_selected_value(filters['status'], 'assigned')}>assigned</option>
+              <option value="contained"{_selected_value(filters['status'], 'contained')}>contained</option>
+              <option value="resolved"{_selected_value(filters['status'], 'resolved')}>resolved</option>
+            </select>
+          </label>
+          <label>Severity
+            <select name="severity">
+              <option value="">All severities</option>
+              <option value="LOW"{_selected_value(filters['severity'], 'LOW')}>LOW</option>
+              <option value="MEDIUM"{_selected_value(filters['severity'], 'MEDIUM')}>MEDIUM</option>
+              <option value="HIGH"{_selected_value(filters['severity'], 'HIGH')}>HIGH</option>
+              <option value="CRITICAL"{_selected_value(filters['severity'], 'CRITICAL')}>CRITICAL</option>
+            </select>
+          </label>
+          <label>Queue
+            <input type="text" name="queue" value="{html.escape(filters['queue'])}" placeholder="soc-triage" />
+          </label>
+          <label>Threat
+            <input type="text" name="threat_type" value="{html.escape(filters['threat_type'])}" placeholder="PORT_SCAN" />
+          </label>
+          <label>Source
+            <input type="text" name="src_ip" value="{html.escape(filters['src_ip'])}" placeholder="10.0.0.5" />
+          </label>
+          <label>Assignee
+            <input type="text" name="assignee" value="{html.escape(filters['assignee'])}" placeholder="alice" />
+          </label>
+          <label>Owner
+            <input type="text" name="owner" value="{html.escape(filters['owner'])}" placeholder="tier-2" />
+          </label>
+        </div>
+        <div class="toolbar-actions">
+          <button type="submit">Apply Filters</button>
+          <a class="button-link secondary" href="/soc-management">Clear Filters</a>
+          <span>{len(incidents)} incidents shown{f' with {active_filter_count} active filters' if active_filter_count else ''}</span>
+        </div>
+      </form>
+    </section>
+
+    <section class="workflow-grid">
+      <article class="card">
+        <div class="table-meta">
+          <h3>Incident Cases</h3>
+          <span>{'Filtered view' if filter_query else 'Latest view'}</span>
+        </div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Queue</th><th>Assignee</th><th>Source</th><th>Threat</th></tr></thead>
+          <tbody>{incident_items}</tbody>
+        </table></div>
+      </article>
+      {incident_detail}
+    </section>
     <section class="metrics-grid">
       <article class="card">
         <div class="k">Avg Time To Assign</div>
@@ -1593,7 +1324,7 @@ def soc_management():
         <span>Recent unmanaged assets inferred from observed activity and missing inventory records.</span>
         <span><a href="/api/devices/unauthorized">Open JSON</a></span>
       </div>
-      <table>
+      <div class="table-scroll"><table>
         <thead>
           <tr>
             <th>IP</th>
@@ -1604,7 +1335,7 @@ def soc_management():
           </tr>
         </thead>
         <tbody>{unauthorized_rows}</tbody>
-      </table>
+      </table></div>
     </section>
 
     <section class="card">
@@ -1613,7 +1344,7 @@ def soc_management():
         <span>Observed zone-to-zone traffic paths without an allow policy or with an explicit block.</span>
         <span><a href="/api/topology/violations">Open JSON</a></span>
       </div>
-      <table>
+      <div class="table-scroll"><table>
         <thead>
           <tr>
             <th>Source Zone</th>
@@ -1624,87 +1355,25 @@ def soc_management():
           </tr>
         </thead>
         <tbody>{topology_rows}</tbody>
-      </table>
-    </section>
-
-    <section class="card">
-      <div class="section-title">Incident Queue Filters</div>
-      <form method="get" action="/soc-management">
-        <div class="toolbar">
-          <label>Status
-            <select name="status">
-              <option value="">All statuses</option>
-              <option value="active"{_selected_value(filters['status'], 'active')}>active</option>
-              <option value="open"{_selected_value(filters['status'], 'open')}>open</option>
-              <option value="assigned"{_selected_value(filters['status'], 'assigned')}>assigned</option>
-              <option value="contained"{_selected_value(filters['status'], 'contained')}>contained</option>
-              <option value="resolved"{_selected_value(filters['status'], 'resolved')}>resolved</option>
-            </select>
-          </label>
-          <label>Severity
-            <select name="severity">
-              <option value="">All severities</option>
-              <option value="LOW"{_selected_value(filters['severity'], 'LOW')}>LOW</option>
-              <option value="MEDIUM"{_selected_value(filters['severity'], 'MEDIUM')}>MEDIUM</option>
-              <option value="HIGH"{_selected_value(filters['severity'], 'HIGH')}>HIGH</option>
-              <option value="CRITICAL"{_selected_value(filters['severity'], 'CRITICAL')}>CRITICAL</option>
-            </select>
-          </label>
-          <label>Queue
-            <input type="text" name="queue" value="{html.escape(filters['queue'])}" placeholder="soc-triage" />
-          </label>
-          <label>Threat
-            <input type="text" name="threat_type" value="{html.escape(filters['threat_type'])}" placeholder="PORT_SCAN" />
-          </label>
-          <label>Source
-            <input type="text" name="src_ip" value="{html.escape(filters['src_ip'])}" placeholder="10.0.0.5" />
-          </label>
-          <label>Assignee
-            <input type="text" name="assignee" value="{html.escape(filters['assignee'])}" placeholder="alice" />
-          </label>
-          <label>Owner
-            <input type="text" name="owner" value="{html.escape(filters['owner'])}" placeholder="tier-2" />
-          </label>
-        </div>
-        <div class="toolbar-actions">
-          <button type="submit">Apply Filters</button>
-          <a class="button-link secondary" href="/soc-management">Clear Filters</a>
-          <span>{len(incidents)} incidents shown{f' with {active_filter_count} active filters' if active_filter_count else ''}</span>
-        </div>
-      </form>
+      </table></div>
     </section>
 
     <section class="grid">
       <article class="card">
         <h3>Threat Queue</h3>
-        <table>
+        <div class="table-scroll"><table>
           <thead><tr><th>Threat Type</th><th>Items</th></tr></thead>
           <tbody>{threat_items}</tbody>
-        </table>
+        </table></div>
       </article>
       <article class="card">
         <h3>Analyst Queue</h3>
-        <table>
+        <div class="table-scroll"><table>
           <thead><tr><th>Queue</th><th>Items</th></tr></thead>
           <tbody>{analyst_items}</tbody>
-        </table>
+        </table></div>
       </article>
     </section>
 
-    <section class="workflow-grid">
-      <article class="card">
-        <div class="table-meta">
-          <h3>Incident Cases</h3>
-          <span>{'Filtered view' if filter_query else 'Latest view'}</span>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Queue</th><th>Assignee</th><th>Source</th><th>Threat</th></tr></thead>
-          <tbody>{incident_items}</tbody>
-        </table>
-      </article>
-      {incident_detail}
-    </section>
-  </main>
-</body>
-</html>"""
-    return Response(page, mimetype="text/html")
+</div>"""
+    return render_template("soc.html", active_page="soc", workspace_html=page)
