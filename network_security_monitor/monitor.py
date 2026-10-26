@@ -43,7 +43,8 @@ class NetworkMonitor:
         stats = monitor.get_stats()
     """
 
-    def __init__(self, config: Config | None = None):
+    def __init__(self, config: Config | None = None, *, alert_context: dict | None = None):
+        self._alert_context = dict(alert_context or {})
         self._cfg = config or Config()
         self._analyzer = PacketAnalyzer()
         self._detector = ThreatDetector(self._cfg)
@@ -82,6 +83,9 @@ class NetworkMonitor:
 
         alerts = self._detector.inspect(packet)
         for alert in alerts:
+            alert.metadata = {**alert.metadata, **self._alert_context}
+            if self._alert_context.get("mode") == "simulation":
+                alert.description = "[SIMULATION] " + alert.description
             self._soc_automation.handle_alert(alert)
             # Persist the alert after automation so case links are captured once.
             self._alert_manager.add(alert)
@@ -161,6 +165,7 @@ class NetworkMonitor:
                     iface=interface,
                     prn=self._process_raw,
                     store=False,
+                    promisc=False,
                     timeout=1,
                 )
             except Exception as exc:

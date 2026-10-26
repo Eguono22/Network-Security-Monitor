@@ -17,6 +17,9 @@ dependencies = [
   "gunicorn>=23,<24; sys_platform != 'win32'",
 ]
 
+[project.optional-dependencies]
+ops = ["cryptography>=43,<47"]
+
 [project.scripts]
 nsm = "network_security_monitor.cli:run_cli"
 nsm-admin = "network_security_monitor.admin:main"

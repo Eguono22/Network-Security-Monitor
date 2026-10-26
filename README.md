@@ -639,6 +639,7 @@ Near-term project direction for `SentinelNet`:
 - Explore multi-tenant controls for MSP-style operation
 
 For the full phased plan, see `docs/SENTINELNET_ROADMAP.md`.
+For collector services, encrypted backup/restore, and uptime checks, see [operations](docs/OPERATIONS.md).
 
 ---
 

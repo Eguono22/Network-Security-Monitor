@@ -1,0 +1,33 @@
+name: Production uptime
+on:
+  schedule:
+    - cron: '13 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: production-uptime
+  cancel-in-progress: true
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify production readiness
+        run: |
+          python3 - <<'PY'
+          import json
+          import time
+          from urllib.request import urlopen
+          for attempt in range(3):
+              try:
+                  with urlopen('https://network-security-monitor.vercel.app/ready', timeout=30) as response:
+                      assert response.status == 200 and json.load(response).get('ready') is True
+                  print('Production readiness passed.')
+                  break
+              except Exception as error:
+                  print('Readiness attempt failed:', type(error).__name__)
+                  if attempt == 2:
+                      raise SystemExit(1)
+                  time.sleep(10)
+          PY
