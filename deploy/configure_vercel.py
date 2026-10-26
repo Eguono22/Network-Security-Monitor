@@ -22,6 +22,7 @@ values = {
     "NSM_ENV": "production", "NSM_AUTH_MODE": "password",
     "NSM_COOKIE_SECURE": "true", "NSM_STORAGE_BACKEND": "postgres",
     "NSM_SERVERLESS_READ_ONLY": "false",
+    "NSM_DATABASE_SCHEMA": "sentinelnet_" + args.environment,
     "NSM_USERS_JSON": users.read_text(), "NSM_SECRET_KEY": key.read_text(),
 }
 if os.getenv("NSM_DATABASE_URL"):

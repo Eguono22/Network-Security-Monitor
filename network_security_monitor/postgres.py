@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from urllib.parse import urlsplit, parse_qs
@@ -34,8 +35,14 @@ def connect():
         if mode not in {"require", "verify-ca", "verify-full"}:
             raise ValueError("External PostgreSQL connections require TLS")
         options["sslmode"] = mode
+    schema = os.getenv("NSM_DATABASE_SCHEMA", "")
+    if schema and not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema):
+        raise ValueError("NSM_DATABASE_SCHEMA must be a valid lowercase PostgreSQL identifier")
     with psycopg.connect(url, row_factory=dict_row, connect_timeout=10, **options) as conn:
         conn.execute("SET LOCAL statement_timeout = '15s'")
+        if schema:
+            from psycopg import sql
+            conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
         yield conn
 
 
@@ -43,6 +50,9 @@ def initialize_database() -> None:
     with connect() as conn:
         # Serialize schema setup across concurrently starting containers.
         conn.execute("SELECT pg_advisory_xact_lock(7263462)")
+        if os.getenv("NSM_DATABASE_SCHEMA"):
+            from psycopg import sql
+            conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(os.environ["NSM_DATABASE_SCHEMA"])))
         conn.execute("""CREATE TABLE IF NOT EXISTS incidents (
             incident_id TEXT PRIMARY KEY, created_at DOUBLE PRECISION NOT NULL,
             updated_at DOUBLE PRECISION NOT NULL, payload JSONB NOT NULL

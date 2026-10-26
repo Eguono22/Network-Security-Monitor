@@ -102,3 +102,16 @@ def test_vercel_database_url_is_accepted(postgres_runtime, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", postgres_runtime)
     case = IncidentManager().create_case(alert())
     assert IncidentManager().get_case(case["incident_id"])["src_ip"] == "10.0.0.99"
+
+
+def test_database_schema_is_explicit_and_idempotent(postgres_runtime, monkeypatch):
+    from network_security_monitor.postgres import connect, initialize_database
+    schema = parse_qsl(urlsplit(postgres_runtime).query)[0][1].split("=", 1)[1]
+    monkeypatch.setenv("NSM_DATABASE_SCHEMA", schema)
+    initialize_database()
+    with connect() as conn:
+        assert conn.execute("SELECT current_schema() AS name").fetchone()["name"] == schema
+    monkeypatch.setenv("NSM_DATABASE_SCHEMA", 'public; DROP TABLE incidents')
+    with pytest.raises(ValueError, match="valid lowercase"):
+        with connect():
+            pass

@@ -39,7 +39,10 @@ Header roles additionally require `NSM_TRUST_ROLE_HEADER=true` in that local mod
 
 Create separate PostgreSQL databases/branches for preview and production. Set
 `NSM_STORAGE_BACKEND=postgres` and `NSM_DATABASE_URL` to the correct connection URL
-for each environment. Vercel integrations may supply `DATABASE_URL` or `POSTGRES_URL`;
+for each environment. If both environments share one managed database, set
+`NSM_DATABASE_SCHEMA=sentinelnet_preview` or `sentinelnet_production` to keep their
+records separate. The configuration helper sets these namespaces automatically;
+`init-db` creates the selected schema. Vercel integrations may supply `DATABASE_URL` or `POSTGRES_URL`;
 the app accepts these automatically when `NSM_DATABASE_URL` is unset. Use TLS for external connections; pooled URLs suit Vercel.
 Use a database owner credential for schema setup, then a restricted runtime role
 with SELECT/INSERT/UPDATE/DELETE on these tables and USAGE on their sequences.
